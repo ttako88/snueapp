@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { categoryStyle } from "./lib/noticeStyle";
 
 export default function Home() {
   const [todayMeal, setTodayMeal] = useState(null); // 오늘 급식
@@ -69,7 +70,12 @@ export default function Home() {
 
       {/* 오늘의 급식 */}
       <section className="rounded-2xl bg-[#0095da] p-4 text-white shadow-sm">
-        <p className="mb-1 text-sm font-bold">🍚 오늘의 급식</p>
+        <div className="mb-1 flex items-center justify-between">
+          <p className="text-sm font-bold">🍚 오늘의 급식</p>
+          <Link href="/meal" className="text-xs text-white/80">
+            이번 주 →
+          </Link>
+        </div>
         {todayMeal && todayMeal.menu[0] !== "휴무" ? (
           <p className="text-sm leading-relaxed opacity-95">
             {todayMeal.menu.join(" · ")}
@@ -83,7 +89,7 @@ export default function Home() {
       <section>
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-sm font-bold text-[#0c4470]">📅 다가오는 일정</h2>
-          <Link href="/schedule" className="text-xs text-[#0095da]">
+          <Link href="/calendar" className="text-xs text-[#0095da]">
             더보기 →
           </Link>
         </div>
@@ -113,19 +119,25 @@ export default function Home() {
           </Link>
         </div>
         <ul className="flex flex-col gap-1.5">
-          {notices.map((n) => (
-            <li key={n.nttSn}>
-              <Link
-                href={`/notices/${n.nttSn}`}
-                className="flex items-center gap-2 rounded-xl bg-white p-2.5 shadow-sm active:bg-[#eaf6fd]"
-              >
-                <span className="shrink-0 rounded bg-[#eaf6fd] px-1.5 py-0.5 text-[10px] font-medium text-[#0095da]">
-                  {n.category}
-                </span>
-                <span className="truncate text-sm text-[#0c4470]">{n.title}</span>
-              </Link>
-            </li>
-          ))}
+          {notices.map((n) => {
+            const s = categoryStyle(n.category); // 이 공지 구분의 색
+            return (
+              <li key={n.nttSn}>
+                <Link
+                  href={`/notices/${n.nttSn}`}
+                  className="flex items-center gap-2 rounded-xl bg-white p-2.5 shadow-sm active:bg-[#eaf6fd]"
+                >
+                  <span
+                    className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold"
+                    style={{ backgroundColor: s.bg, color: s.text }}
+                  >
+                    {n.category}
+                  </span>
+                  <span className="truncate text-sm text-[#0c4470]">{n.title}</span>
+                </Link>
+              </li>
+            );
+          })}
         </ul>
       </section>
     </div>

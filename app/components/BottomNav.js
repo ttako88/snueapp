@@ -3,12 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-// 탭 4개 정의 (아이콘은 우선 이모지로)
+// 하단 탭 4개 (아이콘은 우선 이모지로). 급식·공지는 홈의 '더보기'로 들어감.
 const TABS = [
   { href: "/", label: "홈", icon: "🏠" },
-  { href: "/meal", label: "급식", icon: "🍚" },
-  { href: "/schedule", label: "학사일정", icon: "📅" },
-  { href: "/notices", label: "공지", icon: "📢" },
+  { href: "/calendar", label: "캘린더", icon: "📅" },
+  { href: "/courses", label: "강의", icon: "📚" },
+  { href: "/board", label: "게시판", icon: "📋" },
 ];
 
 export default function BottomNav() {

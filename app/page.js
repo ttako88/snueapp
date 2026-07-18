@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { categoryStyle } from "./lib/noticeStyle";
+import Timetable from "./components/Timetable";
 
 export default function Home() {
   const [todayMeal, setTodayMeal] = useState(null); // 오늘 급식
@@ -67,6 +68,9 @@ export default function Home() {
           </p>
         </div>
       </div>
+
+      {/* 내 시간표 (읽기 전용, 편집은 강의 탭에서) */}
+      <Timetable editable={false} />
 
       {/* 오늘의 급식 */}
       <section className="rounded-2xl bg-[#0095da] p-4 text-white shadow-sm">

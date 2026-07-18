@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Timetable from "../components/Timetable";
 
 // 강의 탭 허브 — 맨 위 '내 시간표' + 아래 도구 카드들.
 // 지금은 학점 계산기만 실제 동작, 나머지는 '준비 중'.
@@ -16,15 +17,8 @@ export default function CoursesPage() {
     <div className="flex flex-col gap-4 px-4 py-4">
       <h2 className="text-lg font-bold text-[#0c4470]">강의</h2>
 
-      {/* 내 시간표 (준비 중) */}
-      <section className="rounded-2xl border border-dashed border-[#0095da]/30 bg-white p-4 text-center">
-        <p className="text-2xl">🗓️</p>
-        <p className="mt-1 font-bold text-[#0c4470]">내 시간표</p>
-        <p className="mt-1 text-xs text-[#0c4470]/50">
-          심화과정·학년을 고르면 확정 시간표가 떠요.
-          <br />전체 강의 데이터 연동 후 열릴 예정이에요!
-        </p>
-      </section>
+      {/* 내 시간표 */}
+      <Timetable editable />
 
       {/* 도구 카드들 (2열) */}
       <div className="grid grid-cols-2 gap-2.5">

@@ -1,0 +1,14 @@
+@import "tailwindcss";
+
+/* 앱 전체를 밝은 톤 하나로 고정 (다크모드에서 안 뒤집히게) */
+:root {
+  color-scheme: light;
+}
+
+body {
+  /* 데스크톱에서 가운데 앱 카드가 도드라져 보이도록 바깥은 연한 회색 */
+  background: #e6edf3;
+  color: #0c4470; /* 새록이 네이비 = 기본 글자색 */
+  font-family: "Pretendard Variable", "Pretendard", "Apple SD Gothic Neo", Arial,
+    Helvetica, sans-serif;
+}

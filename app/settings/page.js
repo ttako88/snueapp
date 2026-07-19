@@ -1,0 +1,109 @@
+"use client"; // 설정 값을 브라우저(localStorage)에서 읽고 씀
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { SetupSheet } from "../components/Timetable";
+import { DEFAULT_SEMESTER, SEMESTER_LABELS, loadTimetableSetup, saveTimetableSetup } from "../lib/timetable";
+
+// 설정 항목 정의. 나중에 새 설정이 생기면 여기 섹션을 추가하면 됨
+// (앞으로 헤더 햄버거 메뉴로 옮기더라도 이 페이지 자체는 그대로 재사용).
+export default function SettingsPage() {
+  const [loaded, setLoaded] = useState(false);
+  const [setup, setSetup] = useState(null); // 학년·과·학기
+  const [eclassConnected, setEclassConnected] = useState(false);
+  const [hideGrad, setHideGrad] = useState(false);
+
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [formGrade, setFormGrade] = useState(3);
+  const [formDept, setFormDept] = useState("");
+  const [formSemester, setFormSemester] = useState(DEFAULT_SEMESTER);
+
+  useEffect(() => {
+    setSetup(loadTimetableSetup());
+    setEclassConnected(Boolean(localStorage.getItem("eclassCalUrl")));
+    setHideGrad(localStorage.getItem("hideGrad") === "1");
+    setLoaded(true);
+  }, []);
+
+  function openSetup() {
+    setFormGrade(setup?.grade || 3);
+    setFormDept(setup?.dept || "");
+    setFormSemester(setup?.semester || DEFAULT_SEMESTER);
+    setSetupOpen(true);
+  }
+  function saveSetup() {
+    if (!formDept) return;
+    const s = saveTimetableSetup(formGrade, formDept, formSemester);
+    setSetup(s);
+    setSetupOpen(false);
+  }
+  function toggleHideGrad(checked) {
+    setHideGrad(checked);
+    localStorage.setItem("hideGrad", checked ? "1" : "0");
+  }
+
+  if (!loaded) return null;
+
+  return (
+    <div className="flex flex-col gap-4 px-4 py-4">
+      <h2 className="text-lg font-bold text-[#0c4470]">설정</h2>
+
+      {/* 내 시간표 */}
+      <section className="rounded-2xl bg-white p-4 shadow-sm">
+        <p className="mb-1 text-xs font-bold text-[#0c4470]/40">내 시간표</p>
+        {setup ? (
+          <button onClick={openSetup} className="flex w-full items-center justify-between text-left">
+            <span className="text-sm font-medium text-[#0c4470]">
+              {setup.grade}학년 · {setup.dept}과 · {SEMESTER_LABELS[setup.semester] || setup.semester}
+            </span>
+            <span className="shrink-0 text-xs font-bold text-[#0095da]">변경 ›</span>
+          </button>
+        ) : (
+          <button onClick={openSetup} className="flex w-full items-center justify-between text-left">
+            <span className="text-sm text-[#0c4470]/50">아직 설정 안 함</span>
+            <span className="shrink-0 text-xs font-bold text-[#0095da]">설정하기 ›</span>
+          </button>
+        )}
+      </section>
+
+      {/* e-Class 연동 */}
+      <section className="rounded-2xl bg-white p-4 shadow-sm">
+        <p className="mb-1 text-xs font-bold text-[#0c4470]/40">e-Class 연동</p>
+        <Link href="/eclass" className="flex w-full items-center justify-between">
+          <span className="flex items-center gap-1.5 text-sm font-medium text-[#0c4470]">
+            {eclassConnected ? (
+              <>
+                <span className="h-1.5 w-1.5 rounded-full bg-[#57a06f]" /> 연결됨
+              </>
+            ) : (
+              <>
+                <span className="h-1.5 w-1.5 rounded-full bg-black/20" /> 연결 안 됨
+              </>
+            )}
+          </span>
+          <span className="shrink-0 text-xs font-bold text-[#0095da]">{eclassConnected ? "관리" : "연동하기"} ›</span>
+        </Link>
+      </section>
+
+      {/* 캘린더 표시 */}
+      <section className="rounded-2xl bg-white p-4 shadow-sm">
+        <p className="mb-2 text-xs font-bold text-[#0c4470]/40">캘린더 표시</p>
+        <label className="flex items-center justify-between">
+          <span className="text-sm font-medium text-[#0c4470]">대학원 일정 숨기기</span>
+          <input
+            type="checkbox"
+            checked={hideGrad}
+            onChange={(e) => toggleHideGrad(e.target.checked)}
+            className="h-5 w-5 accent-[#0095da]"
+          />
+        </label>
+      </section>
+
+      <p className="text-center text-[11px] text-[#0c4470]/30">앞으로 추가되는 설정도 여기 모아둘게요</p>
+
+      {setupOpen && (
+        <SetupSheet {...{ formGrade, setFormGrade, formDept, setFormDept, formSemester, setFormSemester, saveSetup }} onClose={() => setSetupOpen(false)} />
+      )}
+    </div>
+  );
+}

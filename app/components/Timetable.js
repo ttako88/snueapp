@@ -9,7 +9,8 @@ import {
   SEMESTERS,
   SEMESTER_LABELS,
   DEFAULT_SEMESTER,
-  autofillCourses,
+  loadTimetableSetup,
+  saveTimetableSetup,
   colorFor,
   conflicts,
   courseId,
@@ -55,7 +56,7 @@ export default function Timetable({ editable = true }) {
   // 불러오기
   useEffect(() => {
     try {
-      const s = JSON.parse(localStorage.getItem("ttSetup") || "null");
+      const s = loadTimetableSetup();
       const c = JSON.parse(localStorage.getItem("ttCourses") || "[]");
       const a = localStorage.getItem("ttAxis");
       if (s) setSetup(s);
@@ -70,10 +71,9 @@ export default function Timetable({ editable = true }) {
 
   function saveSetup() {
     if (!formDept) return;
-    const s = { grade: formGrade, dept: formDept, semester: formSemester };
+    const s = saveTimetableSetup(formGrade, formDept, formSemester);
     setSetup(s);
-    localStorage.setItem("ttSetup", JSON.stringify(s));
-    setCourses(autofillCourses(formGrade, formDept, formSemester));
+    setCourses(JSON.parse(localStorage.getItem("ttCourses")));
     setSetupOpen(false);
   }
   function toggleAxis() {
@@ -454,7 +454,7 @@ export function TimetableGrid({ courses, axis, onBlock }) {
 }
 
 /* ---------- 셋업 시트 ---------- */
-function SetupSheet({ formGrade, setFormGrade, formDept, setFormDept, formSemester, setFormSemester, saveSetup, onClose }) {
+export function SetupSheet({ formGrade, setFormGrade, formDept, setFormDept, formSemester, setFormSemester, saveSetup, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30" onClick={onClose}>
       <div className="w-full max-w-[480px] rounded-t-2xl bg-white p-4 pb-6 text-left" onClick={(e) => e.stopPropagation()}>

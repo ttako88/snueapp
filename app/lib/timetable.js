@@ -77,6 +77,22 @@ export function autofillCourses(grade, dept, semester = DEFAULT_SEMESTER) {
   return result;
 }
 
+// ── 시간표 셋업 저장/불러오기 (localStorage 공용 헬퍼) ──
+// 강의 탭의 시간표 위젯과 설정 페이지가 같은 로직을 쓰도록 여기 한 곳에 모아둠.
+export function loadTimetableSetup() {
+  try {
+    return JSON.parse(localStorage.getItem("ttSetup") || "null");
+  } catch {
+    return null;
+  }
+}
+export function saveTimetableSetup(grade, dept, semester) {
+  const setup = { grade, dept, semester };
+  localStorage.setItem("ttSetup", JSON.stringify(setup));
+  localStorage.setItem("ttCourses", JSON.stringify(autofillCourses(grade, dept, semester)));
+  return setup;
+}
+
 // 두 강의가 시간이 겹치는지
 export function conflicts(a, b) {
   if (a.day !== b.day) return false;

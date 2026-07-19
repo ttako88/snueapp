@@ -3,12 +3,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-// 하단 탭 4개 (아이콘은 우선 이모지로). 급식·공지는 홈의 '더보기'로 들어감.
+// 하단 탭 5개 (아이콘은 우선 이모지로). 급식·공지는 홈의 '더보기'로 들어감.
+// 설정 탭은 나중에 헤더 햄버거 메뉴로 옮길 수 있음 — /settings 라우트 자체는 그대로 재사용.
 const TABS = [
   { href: "/", label: "홈", icon: "🏠" },
   { href: "/calendar", label: "캘린더", icon: "📅" },
   { href: "/courses", label: "강의", icon: "📚" },
   { href: "/board", label: "게시판", icon: "📋" },
+  { href: "/settings", label: "설정", icon: "⚙️" },
 ];
 
 export default function BottomNav() {

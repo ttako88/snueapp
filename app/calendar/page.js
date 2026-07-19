@@ -159,9 +159,6 @@ export default function CalendarPage() {
     if (pLoaded) localStorage.setItem("hiddenSchedule", JSON.stringify(hidden));
   }, [hidden, pLoaded]);
   useEffect(() => {
-    if (pLoaded) localStorage.setItem("hideGrad", hideGrad ? "1" : "0");
-  }, [hideGrad, pLoaded]);
-  useEffect(() => {
     if (pLoaded) localStorage.setItem("calPanelH", String(panelH));
   }, [panelH, pLoaded]);
 
@@ -522,26 +519,15 @@ export default function CalendarPage() {
         >
           <div className="h-1 w-10 rounded-full bg-black/15" />
         </div>
-        {/* 고정 헤더: 날짜 + 대학원 숨김 + 추가 */}
+        {/* 고정 헤더: 날짜 + 추가 (대학원 숨김은 설정 탭으로 이동함) */}
         <div className="flex items-center justify-between px-4 pb-2">
           <p className="text-sm font-bold text-[#0c4470]">{selLabel}</p>
-          <div className="flex items-center gap-2">
-            <label className="flex items-center gap-1 text-[11px] text-[#0c4470]/50">
-              <input
-                type="checkbox"
-                checked={hideGrad}
-                onChange={(e) => setHideGrad(e.target.checked)}
-                className="h-3.5 w-3.5 accent-[#0095da]"
-              />
-              대학원 숨김
-            </label>
-            <button
-              onClick={openAdd}
-              className="rounded-full bg-[#0095da] px-3 py-1 text-xs font-bold text-white active:opacity-80"
-            >
-              + 추가
-            </button>
-          </div>
+          <button
+            onClick={openAdd}
+            className="rounded-full bg-[#0095da] px-3 py-1 text-xs font-bold text-white active:opacity-80"
+          >
+            + 추가
+          </button>
         </div>
         {/* 스크롤 목록 */}
         <div className="flex-1 overflow-y-auto px-4 pb-3">

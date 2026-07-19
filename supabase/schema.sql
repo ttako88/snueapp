@@ -15,23 +15,18 @@
 -- ============================================================
 
 -- ---------- 초기화(재실행 대비) ----------
-drop trigger if exists on_post_update on public.posts;
-drop trigger if exists on_post_owner on public.posts;
-drop trigger if exists on_post_insert on public.posts;
-drop trigger if exists on_comment_update on public.comments;
-drop trigger if exists on_comment_owner on public.comments;
-drop trigger if exists on_comment_insert on public.comments;
+-- 테이블을 먼저 지운다(트리거는 테이블과 함께 사라짐) → 그 다음 함수.
+drop table if exists public.comment_owners;
+drop table if exists public.comments;
+drop table if exists public.post_owners;
+drop table if exists public.posts;
+drop table if exists public.profiles;
 drop function if exists public.handle_new_post();
 drop function if exists public.record_post_owner();
 drop function if exists public.handle_post_update();
 drop function if exists public.handle_new_comment();
 drop function if exists public.record_comment_owner();
 drop function if exists public.handle_comment_update();
-drop table if exists public.comment_owners;
-drop table if exists public.comments;
-drop table if exists public.post_owners;
-drop table if exists public.posts;
-drop table if exists public.profiles;
 
 -- ---------- 프로필 (auth.users 1:1, 닉네임) ----------
 create table public.profiles (

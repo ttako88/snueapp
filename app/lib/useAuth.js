@@ -9,7 +9,8 @@ import { supabase } from "./supabase";
 export function useAuth() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true); // 세션 확인 중
+  const [profileLoading, setProfileLoading] = useState(false); // 닉네임(profiles) 조회 중
 
   useEffect(() => {
     if (!supabase) {
@@ -29,15 +30,19 @@ export function useAuth() {
       setProfile(null);
       return;
     }
+    setProfileLoading(true);
     supabase
       .from("profiles")
       .select("id, nickname")
       .eq("id", session.user.id)
       .maybeSingle()
-      .then(({ data }) => setProfile(data ?? null));
+      .then(({ data }) => {
+        setProfile(data ?? null);
+        setProfileLoading(false);
+      });
   }, [session]);
 
-  return { session, profile, setProfile, loading };
+  return { session, profile, setProfile, loading, profileLoading };
 }
 
 export async function signOut() {

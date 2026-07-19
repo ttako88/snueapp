@@ -1,16 +1,11 @@
 import Link from "next/link";
 import { BOARDS } from "../lib/boards";
 
-// 게시판 목록 — 카테고리 구조만 먼저 확정 (2026-07-19). 글쓰기는 계정 시스템 이후.
+// 게시판 목록. 실제 글 읽기·쓰기는 로그인 후 각 게시판 안에서.
 export default function BoardPage() {
   return (
     <div className="flex flex-col gap-3 px-4 py-4">
-      <div>
-        <h2 className="text-lg font-bold text-[#0c4470]">게시판</h2>
-        <p className="mt-0.5 text-xs text-[#0c4470]/50">
-          계정 시스템이 준비되면 하나씩 열릴 예정이에요. 어떤 게시판이 있는지 먼저 둘러보세요!
-        </p>
-      </div>
+      <h2 className="text-lg font-bold text-[#0c4470]">게시판</h2>
 
       <ul className="flex flex-col gap-2">
         {BOARDS.map((b) => (
@@ -26,9 +21,7 @@ export default function BoardPage() {
                 <span className="block font-bold text-[#0c4470]">{b.name}</span>
                 <span className="block truncate text-xs text-[#0c4470]/50">{b.teaser}</span>
               </span>
-              <span className="shrink-0 rounded-full bg-black/5 px-2 py-0.5 text-[10px] font-bold text-[#0c4470]/40">
-                준비 중
-              </span>
+              <span className="shrink-0 text-[#0c4470]/25">›</span>
             </Link>
           </li>
         ))}

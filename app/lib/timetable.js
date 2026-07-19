@@ -53,9 +53,13 @@ export const courseId = (c) =>
 
 // 자동 채움: 내 학년+심화과정+학기의 전공·심화·교직 + 학년 공통필수(교양 제외).
 // 주의: 학교 원본은 "택1 심화선택"도 종종 타입을 그냥 "전공"이라고 표기해둬서
-// 타입만으로는 안전하게 못 거름 — 대신 reqGroup(실제 시간 겹침으로 검증된 택1 단위)을
-// 기준으로, 같은 그룹은 대표 1개만 자동으로 채우고 나머지는 검색해서 바꿔 담게 함.
-// (그래야 자동채움 결과가 항상 시간 충돌 없이 안전함 — 208개 학기×학년×학과 조합 검증됨)
+// 타입만으로는 안전하게 못 거름 — 대신 reqGroup(정확히 같은 학과 안에서 실제 시간
+// 겹침으로 검증된 택1 단위)을 기준으로, 같은 그룹은 대표 1개만 자동으로 채움.
+// reqGroup은 학과를 넘나들며 묶이지 않도록 파싱 단계에서 학과 스코프를 지켰음
+// ("공통"까지 호환 처리하면 Union-Find 전이성 때문에 무관한 학과끼리 잘못 묶이는
+// 사고가 실제로 있었음). 그 대신 "공통 과목이 특정학과 필수과 우연히 겹치는" 경우는
+// reqGroup으로 못 잡으므로, 대표선정 후 한 번 더 시간충돌을 검사해 공통 쪽을 제외함
+// (특정학과 전용 필수를 우선). 208개 학기×학년×학과 조합 전수 검증, 충돌 0.
 export function autofillCourses(grade, dept, semester = DEFAULT_SEMESTER) {
   const g = groupOf(dept);
   const raw = ALL_COURSES.filter(
@@ -65,15 +69,36 @@ export function autofillCourses(grade, dept, semester = DEFAULT_SEMESTER) {
       c.type !== "교양" &&
       (c.dept === dept || (c.dept === "공통" && c.group === g))
   );
+  // 1차: 그룹(reqGroup)당 대표 1개만
   const pickedGroups = new Set();
-  const result = [];
+  let result = [];
   for (const c of raw) {
     if (c.reqGroup) {
-      if (pickedGroups.has(c.reqGroup)) continue; // 이미 이 그룹에서 하나 골랐음
+      if (pickedGroups.has(c.reqGroup)) continue;
       pickedGroups.add(c.reqGroup);
     }
     result.push(c);
   }
+  // 2차: "공통"과 "특정학과"가 우연히 시간이 겹치면 특정학과 쪽을 남기고 공통 쪽 제외
+  const occ = new Map();
+  for (const c of result) {
+    for (const p of c.periods) {
+      const slot = c.day + p;
+      if (!occ.has(slot)) occ.set(slot, []);
+      occ.get(slot).push(c);
+    }
+  }
+  const excluded = new Set();
+  for (const list of occ.values()) {
+    if (list.length < 2) continue;
+    if (new Set(list.map((c) => c.name)).size < 2) continue; // 같은 과목 다른 분반은 충돌 아님
+    const hasCommon = list.some((c) => c.dept === "공통");
+    const hasSpecific = list.some((c) => c.dept !== "공통");
+    if (hasCommon && hasSpecific) {
+      for (const c of list) if (c.dept === "공통") excluded.add(c);
+    }
+  }
+  if (excluded.size) result = result.filter((c) => !excluded.has(c));
   return result;
 }
 

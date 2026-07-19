@@ -5,8 +5,15 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { boardBySlug } from "../../../lib/boards";
 import { authorLabel, fmtDate } from "../../../lib/board-fmt";
-import { supabase } from "../../../lib/supabase";
-import { useAuth } from "../../../lib/useAuth";
+import { supabase } from "../../../lib/supabase/client";
+import { fetchPost, isPostOwner, updatePost, softDeletePost } from "../../../lib/community/posts";
+import {
+  fetchComments,
+  fetchOwnedCommentIds,
+  createComment,
+  softDeleteComment,
+} from "../../../lib/community/comments";
+import { useAuth } from "../../../lib/identity/useAuth";
 
 export default function PostDetailPage() {
   const { slug, id } = useParams();
@@ -33,11 +40,7 @@ export default function PostDetailPage() {
   async function loadPost() {
     setLoading(true);
     setError(false);
-    const { data, error: err } = await supabase
-      .from("posts")
-      .select("id, title, body, author_nickname, is_anonymous, created_at, updated_at, deleted_at")
-      .eq("id", id)
-      .maybeSingle();
+    const { data, error: err } = await fetchPost(id);
     if (err || !data || data.deleted_at) {
       setError(true);
       setLoading(false);
@@ -47,27 +50,13 @@ export default function PostDetailPage() {
     setEditTitle(data.title);
     setEditBody(data.body);
     setLoading(false);
-    const { data: own } = await supabase.from("post_owners").select("post_id").eq("post_id", id).maybeSingle();
-    setIsOwner(Boolean(own));
+    setIsOwner(await isPostOwner(id));
   }
 
   async function loadComments() {
-    const { data } = await supabase
-      .from("comments")
-      .select("id, body, author_nickname, is_anonymous, created_at, deleted_at")
-      .eq("post_id", id)
-      .is("deleted_at", null)
-      .order("id", { ascending: true });
+    const { data } = await fetchComments(id);
     setComments(data || []);
-    if (data && data.length) {
-      const { data: own } = await supabase
-        .from("comment_owners")
-        .select("comment_id")
-        .in("comment_id", data.map((c) => c.id));
-      setOwnedCommentIds(new Set((own || []).map((o) => o.comment_id)));
-    } else {
-      setOwnedCommentIds(new Set());
-    }
+    setOwnedCommentIds(await fetchOwnedCommentIds((data || []).map((c) => c.id)));
   }
 
   useEffect(() => {
@@ -82,7 +71,7 @@ export default function PostDetailPage() {
     const b = editBody.trim();
     if (!t || !b) return;
     setSaving(true);
-    const { error: err } = await supabase.from("posts").update({ title: t, body: b }).eq("id", id);
+    const { error: err } = await updatePost(id, { title: t, body: b });
     setSaving(false);
     if (err) {
       alert(`수정에 실패했어요 (${err.message})`);
@@ -94,7 +83,7 @@ export default function PostDetailPage() {
 
   async function deletePost() {
     if (!confirm("정말 삭제할까요? 되돌릴 수 없어요.")) return;
-    const { error: err } = await supabase.from("posts").update({ deleted_at: new Date().toISOString() }).eq("id", id);
+    const { error: err } = await softDeletePost(id);
     if (err) {
       alert(`삭제에 실패했어요 (${err.message})`);
       return;
@@ -106,7 +95,7 @@ export default function PostDetailPage() {
     const b = commentBody.trim();
     if (!b) return;
     setPostingComment(true);
-    const { error: err } = await supabase.from("comments").insert({ post_id: Number(id), body: b, is_anonymous: commentAnon });
+    const { error: err } = await createComment({ postId: Number(id), body: b, isAnonymous: commentAnon });
     setPostingComment(false);
     if (err) {
       alert(`댓글 등록에 실패했어요 (${err.message})`);
@@ -118,7 +107,7 @@ export default function PostDetailPage() {
 
   async function deleteComment(cid) {
     if (!confirm("댓글을 삭제할까요?")) return;
-    const { error: err } = await supabase.from("comments").update({ deleted_at: new Date().toISOString() }).eq("id", cid);
+    const { error: err } = await softDeleteComment(cid);
     if (err) {
       alert(`삭제에 실패했어요 (${err.message})`);
       return;

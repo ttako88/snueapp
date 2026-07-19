@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { supabase } from "../lib/supabase";
-import { useAuth, signOut } from "../lib/useAuth";
+import { supabase } from "../lib/supabase/client";
+import { useAuth, signOut } from "../lib/identity/useAuth";
 
 // 이메일 → 메일의 로그인 링크 클릭 → (첫 가입이면) 닉네임 만들기.
 // 비밀번호를 아예 안 받으므로 유출·재사용 걱정이 없음. 세션은 supabase-js가

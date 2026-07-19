@@ -6,8 +6,9 @@ import { useEffect, useState } from "react";
 import SkeletonList from "../../components/SkeletonList";
 import { boardBySlug } from "../../lib/boards";
 import { authorLabel, fmtDate } from "../../lib/board-fmt";
-import { supabase } from "../../lib/supabase";
-import { useAuth } from "../../lib/useAuth";
+import { supabase } from "../../lib/supabase/client";
+import { fetchBoardPosts, fetchCommentCounts } from "../../lib/community/posts";
+import { useAuth } from "../../lib/identity/useAuth";
 
 export default function BoardListPage() {
   const { slug } = useParams();
@@ -24,29 +25,20 @@ export default function BoardListPage() {
     let cancelled = false;
     setLoading(true);
     setError(false);
-    supabase
-      .from("posts")
-      .select("id, title, author_nickname, is_anonymous, created_at")
-      .eq("board", slug)
-      .is("deleted_at", null)
-      .order("id", { ascending: false })
-      .then(async ({ data, error: err }) => {
-        if (cancelled) return;
-        if (err || !data) {
-          setError(true);
-          setLoading(false);
-          return;
-        }
-        setPosts(data);
+    fetchBoardPosts(slug).then(async ({ data, error: err }) => {
+      if (cancelled) return;
+      if (err || !data) {
+        setError(true);
         setLoading(false);
-        if (data.length === 0) return;
-        const ids = data.map((p) => p.id);
-        const { data: cs } = await supabase.from("comments").select("post_id").in("post_id", ids).is("deleted_at", null);
-        if (cancelled) return;
-        const counts = {};
-        for (const c of cs || []) counts[c.post_id] = (counts[c.post_id] || 0) + 1;
-        setCommentCounts(counts);
-      });
+        return;
+      }
+      setPosts(data);
+      setLoading(false);
+      if (data.length === 0) return;
+      const counts = await fetchCommentCounts(data.map((p) => p.id));
+      if (cancelled) return;
+      setCommentCounts(counts);
+    });
     return () => {
       cancelled = true;
     };

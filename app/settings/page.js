@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { SetupSheet } from "../components/Timetable";
 import { DEFAULT_SEMESTER, SEMESTER_LABELS, loadTimetableSetup, saveTimetableSetup } from "../lib/timetable";
-import { useAuth, signOut } from "../lib/useAuth";
+import { useAuth, signOut } from "../lib/identity/useAuth";
 
 // 설정 항목 정의. 나중에 새 설정이 생기면 여기 섹션을 추가하면 됨
 // (앞으로 헤더 햄버거 메뉴로 옮기더라도 이 페이지 자체는 그대로 재사용).

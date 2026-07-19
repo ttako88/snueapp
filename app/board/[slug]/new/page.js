@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { boardBySlug } from "../../../lib/boards";
-import { supabase } from "../../../lib/supabase";
-import { useAuth } from "../../../lib/useAuth";
+import { createPost } from "../../../lib/community/posts";
+import { useAuth } from "../../../lib/identity/useAuth";
 
 export default function NewPostPage() {
   const { slug } = useParams();
@@ -34,11 +34,7 @@ export default function NewPostPage() {
     if (!b) return setError("내용을 입력해주세요.");
     setBusy(true);
     setError(null);
-    const { data, error: err } = await supabase
-      .from("posts")
-      .insert({ board: slug, title: t, body: b, is_anonymous: isAnonymous })
-      .select("id")
-      .single();
+    const { data, error: err } = await createPost({ board: slug, title: t, body: b, isAnonymous });
     setBusy(false);
     if (err) {
       setError(`글을 등록하지 못했어요 (${err.message})`);

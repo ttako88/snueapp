@@ -1,7 +1,7 @@
 "use client"; // 로그인 세션은 브라우저에서만 존재
 
 import { useEffect, useState } from "react";
-import { supabase } from "./supabase";
+import { supabase } from "../supabase/client";
 
 // 로그인 세션 + 내 프로필(닉네임)을 함께 제공하는 훅.
 // - session === null && !loading → 비로그인

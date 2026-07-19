@@ -5,6 +5,25 @@ import { useEffect, useState } from "react";
 import { eventStyle } from "../lib/eventStyle";
 
 const EXPORT_PAGE = "https://lms.snue.ac.kr/calendar/export.php";
+const CAL_URL_RE = /https:\/\/lms\.snue\.ac\.kr\/calendar\/export_execute\.php\?[^\s"'<>]+/;
+
+// 북마클릿: e-Class(lms.snue.ac.kr)에 로그인된 상태에서 실행하면
+// "모든 이벤트 + 현재와 추후 2달" 설정으로 달력 주소를 자동 생성해
+// 클립보드에 복사해줌. 전부 사용자 브라우저 안에서만 일어나고,
+// 우리 서버·Claude 어디에도 값이 전달되지 않음.
+const BOOKMARKLET = `javascript:(function(){
+if(location.hostname!=='lms.snue.ac.kr'){alert('먼저 e-Class(lms.snue.ac.kr)에 로그인한 뒤 이 버튼을 눌러주세요.');return;}
+var sk=(window.M&&M.cfg&&M.cfg.sesskey)||((document.querySelector('input[name=sesskey]')||{}).value);
+if(!sk){alert('로그인이 필요해요. e-Class에 로그인한 뒤 다시 눌러주세요.');return;}
+var b=new URLSearchParams({sesskey:sk,'_qf__core_calendar_export_form':1,'events[exportevents]':'all','period[timeperiod]':'recentupcoming',generateurl:'1'});
+fetch('https://lms.snue.ac.kr/calendar/export.php',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:b.toString(),credentials:'same-origin'})
+.then(function(r){return r.text();})
+.then(function(html){
+var m=html.match(/https:\\/\\/lms\\.snue\\.ac\\.kr\\/calendar\\/export_execute\\.php\\?[^\\s"'<>]+/);
+if(!m){alert('주소를 찾지 못했어요. e-Class 화면이 바뀌었을 수 있어요. 수동으로 복사해주세요.');return;}
+navigator.clipboard.writeText(m[0]).then(function(){alert('복사 완료! 새록이 앱 e-Class 화면에 붙여넣기만 하면 끝이에요 🦌');}).catch(function(){prompt('아래 주소를 직접 복사하세요:',m[0]);});
+}).catch(function(){alert('연결 중 문제가 생겼어요. e-Class 로그인 상태를 확인해주세요.');});
+})();`;
 
 function typeStyle(type) {
   const label = { 과제: "과제", 시험: "시험", 영상강의: "영상강의" }[type] || "일정";
@@ -58,10 +77,25 @@ export default function EclassPage() {
     }
   }
 
+  // 입력에 딴 글자가 섞여 있어도 달력 주소만 골라냄
+  function extractUrl(text) {
+    const m = text.match(CAL_URL_RE);
+    return m ? m[0] : text.trim();
+  }
+
   function connect(e) {
     e.preventDefault();
-    const u = urlInput.trim();
+    const u = extractUrl(urlInput);
     if (u) load(u, { isNew: true });
+  }
+
+  async function pasteFromClipboard() {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) setUrlInput(extractUrl(text));
+    } catch {
+      setError("클립보드를 읽지 못했어요. 직접 붙여넣기(길게 눌러 붙여넣기) 해주세요.");
+    }
   }
 
   function disconnect() {
@@ -176,26 +210,52 @@ export default function EclassPage() {
         </>
       ) : (
         <>
-          {/* ── 달력 주소 가져오는 방법 ── */}
+          {/* ── 방법 A: 북마클릿 (한 번 등록해두면 이후 원클릭) ── */}
+          <section className="rounded-2xl border border-[#0095da]/20 bg-white p-4 shadow-sm">
+            <p className="mb-1 text-sm font-bold text-[#0c4470]">⚡ 한 번만 등록하면, 다음부턴 원클릭 (PC 추천)</p>
+            <p className="mb-3 text-xs leading-relaxed text-[#0c4470]/60">
+              아래 버튼을 <b>북마크(즐겨찾기) 바로 드래그</b>해서 등록해두세요.
+              <br />
+              나중에 e-Class에 로그인된 상태에서 그 북마크를 누르면, 달력 주소가 자동으로 복사돼요.
+              <br />
+              <span className="text-[#0c4470]/40">
+                (비밀번호는 이 과정에 전혀 등장하지 않아요 — 이미 로그인된 내 브라우저 안에서만 동작해요)
+              </span>
+            </p>
+            <a
+              href={BOOKMARKLET}
+              onClick={(e) => {
+                e.preventDefault();
+                alert("이 버튼은 클릭이 아니라, 위쪽 '즐겨찾기 바'로 드래그해서 등록하는 버튼이에요!");
+              }}
+              draggable
+              className="block cursor-move rounded-xl bg-[#0c4470] py-2.5 text-center text-sm font-bold text-white"
+            >
+              🔖 새록이 e-Class 도우미 (여기를 북마크바로 드래그)
+            </a>
+            <p className="mt-2 text-center text-[11px] text-[#0c4470]/40">
+              모바일이면 아래 &ldquo;직접 붙여넣기&rdquo; 방법을 이용해주세요
+            </p>
+          </section>
+
+          {/* ── 방법 B: 직접 복사해서 붙여넣기 ── */}
           <section className="rounded-2xl bg-white p-4 shadow-sm">
-            <p className="mb-3 text-sm font-bold text-[#0c4470]">🔗 달력 주소 가져오는 방법</p>
+            <p className="mb-3 text-sm font-bold text-[#0c4470]">🔗 직접 붙여넣기</p>
             <ol className="flex flex-col gap-2.5 text-xs leading-relaxed text-[#0c4470]/75">
               <li>
                 <b className="text-[#0095da]">1.</b> 아래 버튼으로 <b>e-Class 일정 내보내기</b> 페이지 열기
-                <br />
-                <span className="text-[#0c4470]/50">(로그인 안 돼 있으면 로그인 후 다시 눌러주세요)</span>
               </li>
               <li>
-                <b className="text-[#0095da]">2.</b> <b>&ldquo;모든 이벤트&rdquo;</b> 선택 +{" "}
+                <b className="text-[#0095da]">2.</b> <b>&ldquo;모든 이벤트&rdquo;</b> +{" "}
                 <b>&ldquo;현재와 추후 2달&rdquo;</b> 선택
               </li>
               <li>
-                <b className="text-[#0095da]">3.</b> 아래쪽 <b>&ldquo;일정 URL 불러오기&rdquo;</b> 버튼 클릭
+                <b className="text-[#0095da]">3.</b> <b>&ldquo;일정 URL 불러오기&rdquo;</b> 버튼 클릭
                 <br />
-                <span className="text-[#0c4470]/50">(&ldquo;내보내기&rdquo; 말고 &ldquo;일정 URL 불러오기&rdquo;예요!)</span>
+                <span className="text-[#0c4470]/50">(&ldquo;내보내기&rdquo;가 아니에요!)</span>
               </li>
               <li>
-                <b className="text-[#0095da]">4.</b> 나온 <b>주소를 복사</b>해서 아래 칸에 붙여넣기
+                <b className="text-[#0095da]">4.</b> 나온 주소를 복사해서 아래 <b>&ldquo;붙여넣기&rdquo;</b> 버튼으로 가져오기
               </li>
             </ol>
             <a
@@ -209,7 +269,16 @@ export default function EclassPage() {
           </section>
 
           <form onSubmit={connect} className="flex flex-col gap-2">
-            <label className="text-xs font-bold text-[#0c4470]/50">복사한 달력 주소 붙여넣기</label>
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-[#0c4470]/50">복사한 달력 주소</label>
+              <button
+                type="button"
+                onClick={pasteFromClipboard}
+                className="rounded-full bg-[#eaf6fd] px-2.5 py-1 text-[11px] font-bold text-[#0095da] active:opacity-70"
+              >
+                📋 붙여넣기
+              </button>
+            </div>
             <textarea
               value={urlInput}
               onChange={(e) => setUrlInput(e.target.value)}

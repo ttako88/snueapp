@@ -11,6 +11,10 @@ import {
   DEFAULT_SEMESTER,
   loadTimetableSetup,
   saveTimetableSetup,
+  loadSemesterCourses,
+  saveSemesterCourses,
+  gradeForSemester,
+  autofillCourses,
   colorFor,
   conflicts,
   courseId,
@@ -37,6 +41,7 @@ const PXMIN = 0.9; // 1분당 픽셀 (그리드 범위는 실제 수업에 맞�
 
 export default function Timetable({ editable = true }) {
   const [setup, setSetup] = useState(null);
+  const [viewSem, setViewSem] = useState(null); // 지금 보고 있는 학기 (기본 = 설정 학기)
   const [courses, setCourses] = useState([]);
   const [axis, setAxis] = useState("period"); // period | time
   const [loaded, setLoaded] = useState(false);
@@ -53,28 +58,42 @@ export default function Timetable({ editable = true }) {
   const [detail, setDetail] = useState(null); // 편집 중인 강의
   const [editForm, setEditForm] = useState(null);
 
-  // 불러오기
+  // 불러오기 (학기별 저장소에서 — 구버전 단일 시간표는 헬퍼가 자동 이전)
   useEffect(() => {
     try {
       const s = loadTimetableSetup();
-      const c = JSON.parse(localStorage.getItem("ttCourses") || "[]");
       const a = localStorage.getItem("ttAxis");
-      if (s) setSetup(s);
-      if (Array.isArray(c)) setCourses(c);
+      if (s) {
+        setSetup(s);
+        setViewSem(s.semester);
+        setCourses(loadSemesterCourses(s.semester) || []);
+      }
       if (a === "period" || a === "time") setAxis(a);
     } catch {}
     setLoaded(true);
   }, []);
   useEffect(() => {
-    if (loaded) localStorage.setItem("ttCourses", JSON.stringify(courses));
-  }, [courses, loaded]);
+    if (loaded && viewSem) saveSemesterCourses(viewSem, courses);
+  }, [courses, loaded, viewSem]);
 
   function saveSetup() {
     if (!formDept) return;
     const s = saveTimetableSetup(formGrade, formDept, formSemester);
     setSetup(s);
-    setCourses(JSON.parse(localStorage.getItem("ttCourses")));
+    setViewSem(s.semester);
+    setCourses(loadSemesterCourses(s.semester) || []);
     setSetupOpen(false);
+  }
+
+  // 학기 전환: 그 학기에 저장해둔 시간표를 불러옴 (없으면 빈 상태 + 자동채움 제안)
+  function switchSem(sem) {
+    setViewSem(sem);
+    setCourses(loadSemesterCourses(sem) || []);
+  }
+  const viewGrade = setup && viewSem ? gradeForSemester(setup.semester, setup.grade, viewSem) : null;
+  function autofillViewSem() {
+    if (!viewGrade) return;
+    setCourses(autofillCourses(viewGrade, setup.dept, viewSem));
   }
   function toggleAxis() {
     const next = axis === "period" ? "time" : "period";
@@ -128,9 +147,9 @@ export default function Timetable({ editable = true }) {
     const q = query.trim();
     const have = new Set(courses.map((c) => courseId(c)));
     const seen = new Set();
-    if (!setup) return [];
+    if (!setup || !viewSem) return [];
     const flat = ALL_COURSES.filter((c) => {
-      if (c.semester !== setup.semester) return false;
+      if (c.semester !== viewSem) return false;
       if (c.grade !== searchGrade) return false;
       if (searchDept !== "전체" && c.dept !== searchDept) return false;
       if (q && !c.name.includes(q) && !c.professor.includes(q)) return false;
@@ -141,7 +160,7 @@ export default function Timetable({ editable = true }) {
     });
     // 같은 이수요건(택1)이거나 같은 과목명이면 분반을 낱개로 안 보여주고 한 줄로 묶기
     return groupCourses(flat);
-  }, [query, searchGrade, searchDept, courses, setup?.semester]);
+  }, [query, searchGrade, searchDept, courses, setup, viewSem]);
 
   function tapSearchGroup(g) {
     if (g.members.length === 1) {
@@ -185,7 +204,7 @@ export default function Timetable({ editable = true }) {
         <div className="text-sm font-bold text-[#0c4470]">
           내 시간표{" "}
           <span className="font-medium text-[#0c4470]/50">
-            {setup.grade}학년 · {setup.dept}과 · {SEMESTER_LABELS[setup.semester] || setup.semester}
+            {viewGrade ? `${viewGrade}학년 · ` : ""}{setup.dept}과
           </span>
         </div>
         <div className="flex items-center gap-1.5">
@@ -205,6 +224,41 @@ export default function Timetable({ editable = true }) {
         </div>
       </div>
 
+      {/* 학기 전환 칩 — 이전 학기 시간표도 기록·조회 (마법사의 기수강 제외에 사용됨) */}
+      {editable && (
+        <div className="-mx-1 mb-2 flex gap-1.5 overflow-x-auto px-1 pb-0.5">
+          {SEMESTERS.map((s) => (
+            <button
+              key={s}
+              onClick={() => switchSem(s)}
+              className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                viewSem === s ? "bg-[#0c4470] text-white" : "bg-black/5 text-[#0c4470]/55"
+              }`}
+            >
+              {SEMESTER_LABELS[s]}
+              {s === setup.semester ? " ✓" : ""}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* 빈 학기 안내 (이전 학기 기록을 빠르게 시작) */}
+      {editable && courses.length === 0 && (
+        <div className="mb-2 rounded-xl border border-dashed border-[#0095da]/30 bg-white p-3 text-center">
+          <p className="text-xs text-[#0c4470]/50">이 학기 시간표가 비어 있어요.</p>
+          {viewGrade ? (
+            <button
+              onClick={autofillViewSem}
+              className="mt-2 rounded-full bg-[#0095da] px-3 py-1.5 text-xs font-bold text-white active:opacity-80"
+            >
+              {viewGrade}학년 {setup.dept}과 기준 자동 채우기
+            </button>
+          ) : (
+            <p className="mt-1 text-[11px] text-[#0c4470]/40">입학 전 학기예요 — 필요하면 + 강의로 직접 담아주세요.</p>
+          )}
+        </div>
+      )}
+
       <TimetableGrid courses={courses} axis={axis} onBlock={openCell} />
 
       {editable && (
@@ -220,13 +274,13 @@ export default function Timetable({ editable = true }) {
       {searchOpen && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30" onClick={() => setSearchOpen(false)}>
           <div className="flex max-h-[80%] w-full max-w-[480px] flex-col rounded-t-2xl bg-white p-4" onClick={(e) => e.stopPropagation()}>
-            <div className="mb-2 flex items-center justify-between">
+            <div className="mb-2 flex shrink-0 items-center justify-between">
               <h3 className="text-base font-bold text-[#0c4470]">강의 추가</h3>
               <button onClick={() => setSearchOpen(false)} className="text-xl text-[#0c4470]/40">×</button>
             </div>
 
-            {/* 학년 토글 */}
-            <div className="mb-2 flex gap-1.5">
+            {/* 학년 토글 (shrink-0: 목록이 길어도 눌려 찌그러지지 않게) */}
+            <div className="mb-2 flex shrink-0 gap-1.5">
               {GRADES.map((g) => (
                 <button
                   key={g}
@@ -238,7 +292,7 @@ export default function Timetable({ editable = true }) {
               ))}
             </div>
             {/* 과 토글 (가로 스크롤) */}
-            <div className="-mx-4 mb-2 flex gap-1.5 overflow-x-auto px-4 pb-1">
+            <div className="-mx-4 mb-2 flex shrink-0 gap-1.5 overflow-x-auto px-4 pb-1">
               {DEPT_FILTERS.map((d) => (
                 <button
                   key={d}
@@ -254,7 +308,7 @@ export default function Timetable({ editable = true }) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="과목명 또는 교수명 검색"
-              className="mb-3 w-full rounded-xl bg-[#f2f6fa] px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#0095da]/40"
+              className="mb-3 w-full shrink-0 rounded-xl bg-[#f2f6fa] px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#0095da]/40"
             />
             <div className="flex-1 overflow-y-auto">
               {searchResults.length === 0 && (
@@ -457,7 +511,7 @@ export function TimetableGrid({ courses, axis, onBlock }) {
 export function SetupSheet({ formGrade, setFormGrade, formDept, setFormDept, formSemester, setFormSemester, saveSetup, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30" onClick={onClose}>
-      <div className="w-full max-w-[480px] rounded-t-2xl bg-white p-4 pb-6 text-left" onClick={(e) => e.stopPropagation()}>
+      <div className="max-h-[92%] w-full max-w-[480px] overflow-y-auto rounded-t-2xl bg-white p-4 pb-6 text-left" onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-base font-bold text-[#0c4470]">학기 · 학년 · 심화과정</h3>
           <button onClick={onClose} className="text-xl text-[#0c4470]/40">×</button>

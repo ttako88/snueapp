@@ -120,10 +120,79 @@ export function loadTimetableSetup() {
     return null;
   }
 }
+
+// ── 학기별 시간표 저장 (v2 스키마) ──
+// ttSemesters = { "2025-1": Course[], ... } 로 학기마다 따로 보관.
+// 구버전(단일 "ttCourses")은 최초 접근 시 당시 설정된 학기 칸으로 자동 이전 —
+// 기존 사용자 데이터 손실 금지. (구키는 롤백 대비 당분간 지우지 않고,
+// 화면들이 전부 새 헬퍼로 넘어간 뒤 정리한다. 그동안 saveSemesterCourses가
+// "현재 학기" 저장 시 구키에도 같이 써서 두 소스가 어긋나지 않게 유지.)
+const SEM_STORE_KEY = "ttSemesters";
+function readSemStore() {
+  try {
+    const raw = localStorage.getItem(SEM_STORE_KEY);
+    if (raw) return JSON.parse(raw);
+    // 마이그레이션: 구버전 단일 시간표 → 그 시점 설정 학기 칸으로
+    const old = localStorage.getItem("ttCourses");
+    const setup = loadTimetableSetup();
+    const store = old ? { [(setup && setup.semester) || DEFAULT_SEMESTER]: JSON.parse(old) } : {};
+    localStorage.setItem(SEM_STORE_KEY, JSON.stringify(store));
+    return store;
+  } catch {
+    return {};
+  }
+}
+export function loadSemesterCourses(semester) {
+  const store = readSemStore();
+  return store[semester] || null; // null = 그 학기는 아직 만든 적 없음
+}
+export function saveSemesterCourses(semester, courses) {
+  const store = readSemStore();
+  store[semester] = courses;
+  localStorage.setItem(SEM_STORE_KEY, JSON.stringify(store));
+  // 과도기 호환: 현재 설정 학기라면 구키에도 동기화 (아직 구키를 읽는 화면 대비)
+  const setup = loadTimetableSetup();
+  if (setup && setup.semester === semester) {
+    localStorage.setItem("ttCourses", JSON.stringify(courses));
+  }
+}
+export function loadAllSemesterCourses() {
+  return readSemStore();
+}
+
+// 기준 학기·학년으로 다른 학기의 내 학년을 역산. (예: 2026-2에 2학년이면 2025-2는 1학년)
+// 1~4 범위 밖(입학 전/졸업 후)이면 null.
+export function gradeForSemester(baseSemester, baseGrade, targetSemester) {
+  const year = (s) => parseInt(s, 10);
+  const g = baseGrade - (year(baseSemester) - year(targetSemester));
+  return g >= 1 && g <= 4 ? g : null;
+}
+
+// 마법사용: 기준 학기 "이전" 학기들의 저장된 시간표에서 이수 이력 수집.
+// 과목명(정규화 없이 원문)과 reqGroup 요건 id 두 집합을 돌려줌 —
+// 같은 요건(택1)을 이미 채웠으면 이름이 달라도 제외할 수 있게.
+export function collectTakenBefore(semester) {
+  const store = readSemStore();
+  const names = new Set();
+  const groups = new Set();
+  const idx = SEMESTERS.indexOf(semester);
+  for (const [sem, courses] of Object.entries(store)) {
+    const i = SEMESTERS.indexOf(sem);
+    if (idx !== -1 && (i === -1 || i >= idx)) continue; // 기준 학기와 그 이후는 제외
+    for (const c of courses || []) {
+      names.add(c.name);
+      if (c.reqGroup) groups.add(c.reqGroup);
+    }
+  }
+  return { names, groups };
+}
+
 export function saveTimetableSetup(grade, dept, semester) {
   const setup = { grade, dept, semester };
   localStorage.setItem("ttSetup", JSON.stringify(setup));
-  localStorage.setItem("ttCourses", JSON.stringify(autofillCourses(grade, dept, semester)));
+  const filled = autofillCourses(grade, dept, semester);
+  localStorage.setItem("ttCourses", JSON.stringify(filled));
+  saveSemesterCourses(semester, filled);
   return setup;
 }
 

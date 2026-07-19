@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { loadAllSemesterCourses, loadTimetableSetup } from "../../lib/timetable";
 
 /* ---------- 상수 ---------- */
 const SEMESTERS = [];
@@ -79,19 +80,35 @@ export default function GpaPage() {
     setSemesters((prev) => ({ ...prev, [sel]: [emptyRow(), emptyRow(), emptyRow()] }));
   }
   function importTimetable() {
-    let tt = [];
+    // 선택한 탭(예: 1학년 2학기)에 대응하는 실제 학기를 시간표 설정 기준으로 역산해,
+    // 그 학기에 저장해둔 시간표를 우선 불러옴. 없으면 현재 학기 시간표로 폴백.
     let ttSetup = null;
+    let store = {};
     try {
-      tt = JSON.parse(localStorage.getItem("ttCourses") || "[]");
-      ttSetup = JSON.parse(localStorage.getItem("ttSetup") || "null");
+      ttSetup = loadTimetableSetup();
+      store = loadAllSemesterCourses();
     } catch {}
+    let tt = null;
+    let src = "";
+    if (ttSetup) {
+      const [g, s] = sel.split("-").map(Number);
+      const year = parseInt(ttSetup.semester, 10) - (ttSetup.grade - g);
+      const semKey = `${year}-${s}`;
+      if (store[semKey]?.length) {
+        tt = store[semKey];
+        src = `${year}년 ${s}학기에 저장한 시간표`;
+      }
+    }
+    if (!tt) {
+      tt = ttSetup ? store[ttSetup.semester] || [] : [];
+      src = "현재 내 시간표";
+    }
     if (!tt.length) {
       alert("먼저 강의 탭에서 내 시간표를 만들어 주세요.");
       return;
     }
-    const who = ttSetup ? `${ttSetup.grade}학년 ${ttSetup.dept}과` : "현재";
     const semLabel = SEMESTERS.find((s) => s.key === sel).label;
-    if (!confirm(`현재 내 시간표(${who}, ${tt.length}과목)를 '${semLabel}'에 불러올까요?`)) return;
+    if (!confirm(`${src}(${tt.length}과목)를 '${semLabel}'에 불러올까요?`)) return;
     setSemesters((prev) => {
       const cur = prev[sel] || [];
       const nonEmpty = cur.filter((r) => r.name.trim());

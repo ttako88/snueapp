@@ -4,7 +4,18 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TimetableGrid } from "../../components/Timetable";
-import { ALL_COURSES, DAYS, DEPARTMENTS, DEFAULT_SEMESTER, colorFor, courseId, groupCourses } from "../../lib/timetable";
+import {
+  ALL_COURSES,
+  DAYS,
+  DEPARTMENTS,
+  DEFAULT_SEMESTER,
+  colorFor,
+  courseId,
+  groupCourses,
+  loadTimetableSetup,
+  loadSemesterCourses,
+  collectTakenBefore,
+} from "../../lib/timetable";
 import { generateTimetables } from "../../lib/wizard";
 
 const GRADES = [1, 2, 3, 4];
@@ -17,6 +28,8 @@ export default function WizardPage() {
   const [base, setBase] = useState([]); // 고정(전공·심화·교직), 읽기전용
   const [required, setRequired] = useState([]); // 필수(재이수·놓친 과목)
   const [candidates, setCandidates] = useState([]); // 후보(순서=우선순위)
+  const [taken, setTaken] = useState(null); // 이전 학기들 이수 이력 {names, groups}
+  const [semester, setSemester] = useState(DEFAULT_SEMESTER);
   const [loaded, setLoaded] = useState(false);
 
   const [maxCredits, setMaxCredits] = useState(20);
@@ -28,21 +41,28 @@ export default function WizardPage() {
   const [resultIdx, setResultIdx] = useState(0);
   const [axis, setAxis] = useState("period");
 
-  // 현재 내 시간표에서 전공·심화·교직만 '고정'으로 가져오기
+  // 현재 학기 시간표에서 전공·심화·교직만 '고정'으로 + 이전 학기들의 이수 이력 수집
   useEffect(() => {
     try {
-      const tt = JSON.parse(localStorage.getItem("ttCourses") || "[]");
+      const setup = loadTimetableSetup();
+      const sem = setup?.semester || DEFAULT_SEMESTER;
+      setSemester(sem);
+      const tt = loadSemesterCourses(sem) || [];
       setBase(tt.filter((c) => c.type === "전공" || c.type === "심화" || c.type === "교직"));
+      setTaken(collectTakenBefore(sem)); // 이미 들은 과목·요건은 후보검색에서 자동 제외
     } catch {}
     setLoaded(true);
   }, []);
 
-  // 검색은 항상 내 시간표와 같은 학기로 (A/B군마다 같은 강의가 매학기 열려 헷갈림 방지)
-  const semester = base[0]?.semester || DEFAULT_SEMESTER;
-
+  // 필수도 그룹(이수요건) 단위로 관리 — 그룹당 결국 1개만 들으므로 학점도 대표 1개로 계산
+  const requiredGroups = useMemo(() => groupCourses(required), [required]);
   const fixedCredits = useMemo(
-    () => [...base, ...required].reduce((n, c) => n + (c.periods?.length || 0), 0),
-    [base, required]
+    () =>
+      [...base, ...requiredGroups.map((g) => g.members[0])].reduce(
+        (n, c) => n + (c.periods?.length || 0),
+        0
+      ),
+    [base, requiredGroups]
   );
   useEffect(() => {
     setMaxCredits((m) => Math.max(m, fixedCredits));
@@ -53,8 +73,9 @@ export default function WizardPage() {
     [base, required, candidates]
   );
 
-  function removeRequired(c) {
-    setRequired((rs) => rs.filter((x) => courseId(x) !== courseId(c)));
+  function removeRequiredGroup(g) {
+    const ids = new Set(g.members.map(courseId));
+    setRequired((rs) => rs.filter((c) => !ids.has(courseId(c))));
   }
   // 후보는 그룹(이수요건) 단위로 묶여 보이므로, 지울 때도 그룹 전체를 지움
   const candidateGroups = useMemo(() => groupCourses(candidates), [candidates]);
@@ -91,7 +112,8 @@ export default function WizardPage() {
 
   function applyResult() {
     const combo = genResult.results[resultIdx];
-    const merged = [...base, ...required, ...combo.courses];
+    // 필수 그룹에서 고른 과목은 combo.courses에 있고, 단일 필수는 requiredFixed에 있음
+    const merged = [...base, ...(genResult.requiredFixed || []), ...combo.courses];
     const seen = new Set();
     const dedup = merged.filter((c) => {
       const k = courseId(c);
@@ -164,20 +186,46 @@ export default function WizardPage() {
       {step === 2 && (
         <section>
           <h3 className="mb-1 text-sm font-bold text-[#0c4470]">필수로 넣을 과목</h3>
-          <p className="mb-3 text-xs text-[#0c4470]/50">재이수하거나 이전에 놓친 과목을 골라주세요. 조합마다 무조건 포함돼요.</p>
+          <p className="mb-3 text-xs text-[#0c4470]/50">
+            재이수하거나 이전에 놓친 과목을 골라주세요. 조합마다 무조건 포함돼요.
+            분반·대체과목이 여러 개면 통째로 담기고, 마법사가 시간 맞는 하나를 골라요.
+          </p>
           <button
             onClick={() => setAddOpen("required")}
             className="mb-3 w-full rounded-xl border border-[#0095da]/30 bg-white py-2.5 text-sm font-bold text-[#0095da] active:bg-[#eaf6fd]"
           >
             + 필수 과목 검색
           </button>
-          {required.length === 0 ? (
+          {requiredGroups.length === 0 ? (
             <p className="py-6 text-center text-sm text-[#0c4470]/40">재이수·놓친 과목이 없으면 그냥 다음으로 넘어가도 돼요.</p>
           ) : (
             <ul className="flex flex-col gap-1.5">
-              {required.map((c) => (
-                <CourseRow key={courseId(c)} c={c} onRemove={() => removeRequired(c)} />
-              ))}
+              {requiredGroups.map((g) => {
+                const c0 = g.members[0];
+                const col = colorFor(c0.name);
+                return (
+                  <li key={g.key} className="flex items-center gap-2 rounded-xl bg-white p-2.5 shadow-sm">
+                    <span className="h-8 w-1 shrink-0 rounded-full" style={{ backgroundColor: col.bar }} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-[#0c4470]">
+                        {g.label} <span className="text-[10px] font-bold text-[#0095da]/70">{c0.type}</span>
+                      </span>
+                      <span className="block truncate text-xs text-[#0c4470]/50">
+                        {g.isMulti
+                          ? `${g.members.length}개 중 시간 맞는 1개 자동 선택`
+                          : `${c0.day}${c0.periods.join("")}교시 · ${c0.professor}`}
+                      </span>
+                    </span>
+                    <button
+                      onClick={() => removeRequiredGroup(g)}
+                      className="px-1 text-lg text-[#0c4470]/30 active:text-[#d05b6a]"
+                      aria-label="삭제"
+                    >
+                      ×
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>
@@ -290,6 +338,7 @@ export default function WizardPage() {
         <AddSheet
           mode={addOpen}
           excludeIds={excludeIds}
+          taken={taken}
           semester={semester}
           onAdd={(courses) => {
             if (addOpen === "required") setRequired((rs) => [...rs, ...courses]);
@@ -407,14 +456,12 @@ function DragList({ groups, onReorder, onRemove }) {
 
 /* ---------- 검색 시트 (필수/후보 공용) ---------- */
 // 같은 이수요건(reqGroup)이거나 같은 과목명이면 분반을 낱개로 안 보여주고 한 줄로 묶음.
-// 탭했을 때 동작은 모드에 따라 다름:
-//  - 필수: 정확히 재이수해야 하는 과목 "하나"를 골라야 하므로, 여러 개면 상세선택 후 그거 하나만 추가
-//  - 후보: 이수요건 자체가 후보이므로, 여러 개면 그룹 전체를 담아 마법사가 알아서 하나를 고르게 함
-function AddSheet({ mode, excludeIds, semester, onAdd, onClose }) {
+// 필수·후보 모두 그룹째 담음 — 어느 분반/대체과목을 들을지는 마법사가 조합할 때
+// 시간표에 맞춰 고르므로, 여기서 하나를 강제로 고르게 하면 마법사의 의미가 없음.
+function AddSheet({ mode, excludeIds, taken, semester, onAdd, onClose }) {
   const [grade, setGrade] = useState(1);
   const [dept, setDept] = useState("전체");
   const [query, setQuery] = useState("");
-  const [groupDetail, setGroupDetail] = useState(null); // 필수모드 상세선택 중인 그룹
 
   const groups = useMemo(() => {
     const q = query.trim();
@@ -424,35 +471,34 @@ function AddSheet({ mode, excludeIds, semester, onAdd, onClose }) {
       if (c.grade !== grade) return false;
       if (dept !== "전체" && c.dept !== dept) return false;
       if (q && !c.name.includes(q) && !c.professor.includes(q)) return false;
+      // 후보 검색에선 이전 학기에 이미 들은 과목(또는 같은 택1 요건을 채운 과목)을 숨김.
+      // 필수(재이수) 검색은 "들었던 걸 다시 듣는" 용도라 숨기지 않음.
+      if (mode === "candidate" && taken) {
+        if (taken.names.has(c.name)) return false;
+        if (c.reqGroup && taken.groups.has(c.reqGroup)) return false;
+      }
       const k = courseId(c);
       if (excludeIds.has(k) || seen.has(k)) return false;
       seen.add(k);
       return true;
     });
     return groupCourses(flat);
-  }, [grade, dept, query, excludeIds, semester]);
+  }, [grade, dept, query, excludeIds, semester, mode, taken]);
 
   function tapGroup(g) {
-    if (g.members.length === 1) {
-      onAdd([g.members[0]]);
-      return;
-    }
-    if (mode === "required") {
-      setGroupDetail(g); // 필수는 반드시 정확한 그 과목 하나를 골라야 함
-    } else {
-      onAdd(g.members); // 후보는 그룹째로 — 마법사가 시간표에 맞는 걸 알아서 고름
-    }
+    onAdd(g.members.length === 1 ? [g.members[0]] : g.members); // 그룹째 — 분반 선택은 마법사 몫
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30" onClick={onClose}>
       <div className="flex max-h-[80%] w-full max-w-[480px] flex-col rounded-t-2xl bg-white p-4" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-2 flex shrink-0 items-center justify-between">
           <h3 className="text-base font-bold text-[#0c4470]">{mode === "required" ? "필수 과목 검색" : "후보 과목 검색"}</h3>
           <button onClick={onClose} className="text-xl text-[#0c4470]/40">×</button>
         </div>
 
-        <div className="mb-2 flex gap-1.5">
+        {/* 학년·과 필터: shrink-0으로 목록이 길어도 눌려 찌그러지지 않게 */}
+        <div className="mb-2 flex shrink-0 gap-1.5">
           {GRADES.map((g) => (
             <button
               key={g}
@@ -463,7 +509,7 @@ function AddSheet({ mode, excludeIds, semester, onAdd, onClose }) {
             </button>
           ))}
         </div>
-        <div className="-mx-4 mb-2 flex gap-1.5 overflow-x-auto px-4 pb-1">
+        <div className="-mx-4 mb-2 flex shrink-0 gap-1.5 overflow-x-auto px-4 pb-1">
           {DEPT_FILTERS.map((d) => (
             <button
               key={d}
@@ -478,7 +524,7 @@ function AddSheet({ mode, excludeIds, semester, onAdd, onClose }) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="과목명 또는 교수명 검색"
-          className="mb-3 w-full rounded-xl bg-[#f2f6fa] px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#0095da]/40"
+          className="mb-3 w-full shrink-0 rounded-xl bg-[#f2f6fa] px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#0095da]/40"
         />
         <div className="flex-1 overflow-y-auto">
           {groups.length === 0 && <p className="py-8 text-center text-sm text-[#0c4470]/40">해당하는 강의가 없어요.</p>}
@@ -502,7 +548,7 @@ function AddSheet({ mode, excludeIds, semester, onAdd, onClose }) {
                           : `${c0.day}${c0.periods.join("")}교시 · ${c0.professor} · ${c0.room}`}
                       </span>
                     </span>
-                    <span className="shrink-0 text-lg font-bold text-[#0095da]">{g.isMulti ? "›" : "+"}</span>
+                    <span className="shrink-0 text-lg font-bold text-[#0095da]">+</span>
                   </button>
                 </li>
               );
@@ -511,42 +557,6 @@ function AddSheet({ mode, excludeIds, semester, onAdd, onClose }) {
         </div>
       </div>
 
-      {/* 필수모드 상세선택: 여러 대체과목/분반 중 정확히 하나 고르기 */}
-      {groupDetail && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/40" onClick={(e) => { e.stopPropagation(); setGroupDetail(null); }}>
-          <div className="flex max-h-[70%] w-full max-w-[480px] flex-col rounded-t-2xl bg-white p-4" onClick={(e) => e.stopPropagation()}>
-            <div className="mb-2 flex items-center justify-between">
-              <h3 className="text-base font-bold text-[#0c4470]">{groupDetail.label}</h3>
-              <button onClick={() => setGroupDetail(null)} className="text-xl text-[#0c4470]/40">×</button>
-            </div>
-            <p className="mb-3 text-xs text-[#0c4470]/50">재이수하는 정확한 과목 하나를 골라주세요.</p>
-            <div className="flex-1 overflow-y-auto">
-              <ul className="flex flex-col gap-1.5">
-                {groupDetail.members.map((c) => (
-                  <li key={courseId(c)}>
-                    <button
-                      onClick={() => {
-                        onAdd([c]);
-                        setGroupDetail(null);
-                      }}
-                      className="flex w-full items-center gap-2 rounded-xl bg-[#f7fafc] p-2.5 text-left active:bg-[#eaf6fd]"
-                    >
-                      <span className="h-8 w-1 rounded-full" style={{ backgroundColor: colorFor(c.name).bar }} />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium text-[#0c4470]">
-                          {c.name}{c.section ? ` (${c.section})` : ""}
-                        </span>
-                        <span className="block truncate text-xs text-[#0c4470]/50">{c.day}{c.periods.join("")}교시 · {c.professor} · {c.room}</span>
-                      </span>
-                      <span className="shrink-0 text-lg font-bold text-[#0095da]">+</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -566,7 +576,7 @@ function ResultsView({ genResult, resultIdx, setResultIdx, base, required, axis,
   }
 
   const combo = genResult.results[resultIdx];
-  const previewCourses = [...base, ...required, ...combo.courses];
+  const previewCourses = [...base, ...(genResult.requiredFixed || []), ...combo.courses];
   const hasNoCandidates = genResult.candidateGroups === 0;
 
   return (

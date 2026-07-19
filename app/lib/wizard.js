@@ -2,7 +2,8 @@
 //
 // 입력:
 //   base       : 고정 과목 배열 (내 시간표의 전공/심화/교직) — 항상 포함
-//   required   : 필수 과목 배열 (재이수/놓친 과목) — 항상 포함
+//   required   : 필수 과목 배열 (재이수/놓친 과목). 같은 이수요건(그룹)의 분반/대체과목을
+//                통째로 담아도 됨 — 그룹당 정확히 1개를 마법사가 시간 맞춰 골라 반드시 포함.
 //   candidates : 후보 과목 배열 (교양 등). 같은 reqGroup(학교 원본의 "택1" 이수요건,
 //                예: 운동과웰니스↔운동과건강디자인처럼 이름이 달라도 하나임)이거나
 //                reqGroup이 없으면 같은 name = 같은 과목의 여러 분반, 모두 택1로 묶임.
@@ -31,9 +32,24 @@ export function generateTimetables({
   maxResults = 24,
 }) {
   const freeSet = new Set(freeDays);
-  const fixedCourses = [...base, ...required];
 
-  // 1) 고정+필수 점유 슬롯 + 자체 충돌 검사
+  // 0) 필수를 이수요건 유닛으로 묶기: 강좌가 1개뿐인 유닛은 그대로 고정,
+  //    여러 개(분반/대체과목)면 마법사가 그중 시간 맞는 1개를 반드시 선택.
+  const reqUnits = new Map();
+  for (const c of required) {
+    const k = groupKeyOf(c);
+    if (!reqUnits.has(k)) reqUnits.set(k, []);
+    reqUnits.get(k).push(c);
+  }
+  const requiredFixed = [];
+  const requiredGroups = [];
+  for (const [k, sections] of reqUnits) {
+    if (sections.length === 1) requiredFixed.push(sections[0]);
+    else requiredGroups.push({ key: "req:" + k, label: sections[0].groupLabel || sections[0].name, sections });
+  }
+  const fixedCourses = [...base, ...requiredFixed];
+
+  // 1) 고정+필수(단일) 점유 슬롯 + 자체 충돌 검사
   const occupied0 = new Set();
   for (const c of fixedCourses) {
     for (const s of slotsOf(c)) {
@@ -43,6 +59,7 @@ export function generateTimetables({
           results: [],
           baseWarnings: [],
           candidateGroups: 0,
+          requiredFixed,
         };
       }
       occupied0.add(s);
@@ -73,21 +90,30 @@ export function generateTimetables({
   const N = groupList.length;
   const groupIndex = new Map(groupList.map((g, i) => [g.key, i]));
 
-  // 3) 백트래킹으로 조합 생성 (각 과목: 건너뛰기 또는 한 분반 선택)
+  // 3) 백트래킹으로 조합 생성.
+  //    필수 그룹(mandatory)은 건너뛰기 불가 — 반드시 1개 선택 (조건 필터도 면제,
+  //    필수니까 공강/1·2교시 희망보다 우선. 경고는 baseWarnings에서 다룸).
+  //    후보 그룹은 건너뛰기 or 한 분반 선택.
+  const btList = [
+    ...requiredGroups.map((g) => ({ ...g, mandatory: true })),
+    ...groupList.map((g) => ({ ...g, mandatory: false })),
+  ];
+  const M = btList.length;
   const combos = [];
   let guard = 0;
   function bt(i, picked, occupied, credits) {
     if (guard > 200000) return; // 폭주 방지
     guard++;
-    if (i === N) {
+    if (i === M) {
       combos.push({ courses: [...picked], addedCredits: credits });
       return;
     }
-    bt(i + 1, picked, occupied, credits); // 이 과목 건너뛰기
-    for (const sec of groupList[i].sections) {
+    const unit = btList[i];
+    if (!unit.mandatory) bt(i + 1, picked, occupied, credits); // 후보만 건너뛰기 허용
+    for (const sec of unit.sections) {
       if (slotsOf(sec).some((s) => occupied.has(s))) continue;
       const c = creditOf(sec);
-      if (fixedCredits + credits + c > maxCredits) continue;
+      if (!unit.mandatory && fixedCredits + credits + c > maxCredits) continue;
       const nextOcc = new Set(occupied);
       for (const s of slotsOf(sec)) nextOcc.add(s);
       picked.push(sec);
@@ -96,6 +122,17 @@ export function generateTimetables({
     }
   }
   bt(0, [], occupied0, 0);
+
+  // 필수 그룹이 있는데 조합이 하나도 안 나오면 = 필수를 배치할 방법이 없음
+  if (combos.length === 0 && requiredGroups.length > 0) {
+    return {
+      infeasible: "필수 과목을 배치할 수 없어요 — 고정 과목과 시간이 모두 겹쳐요",
+      results: [],
+      baseWarnings,
+      candidateGroups: N,
+      requiredFixed,
+    };
+  }
 
   // 4) maximal(더 못 넣는 조합)만 + 중복 제거 + 점수
   function isMaximal(combo) {
@@ -121,7 +158,10 @@ export function generateTimetables({
     if (seen.has(key)) continue;
     seen.add(key);
     let score = 0;
-    for (const c of combo.courses) score += N - groupIndex.get(groupKeyOf(c)); // 상위 우선순위일수록 큼
+    for (const c of combo.courses) {
+      const gi = groupIndex.get(groupKeyOf(c));
+      if (gi !== undefined) score += N - gi; // 상위 우선순위 후보일수록 큼 (필수 픽은 점수 무관)
+    }
     maximal.push({ ...combo, score, totalCredits: fixedCredits + combo.addedCredits });
   }
   maximal.sort((a, b) => b.score - a.score || b.totalCredits - a.totalCredits);
@@ -131,5 +171,7 @@ export function generateTimetables({
     // 후보가 없거나 하나도 못 넣는 경우 → 고정/필수만
     results = [{ courses: [], addedCredits: 0, score: 0, totalCredits: fixedCredits }];
   }
-  return { infeasible: null, results, baseWarnings, candidateGroups: N };
+  // requiredFixed: 화면에서 base와 함께 항상 표시할 필수(단일) 과목들.
+  // 필수 그룹에서 고른 과목은 results[].courses 안에 들어있음.
+  return { infeasible: null, results, baseWarnings, candidateGroups: N, requiredFixed };
 }

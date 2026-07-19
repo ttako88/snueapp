@@ -1,5 +1,6 @@
 "use client"; // 달력 조작·내 일정 추가·숨김을 브라우저에서 처리
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { eventStyle } from "../lib/eventStyle";
 
@@ -35,8 +36,26 @@ const PERSONAL_CATS = [
 
 const MAX_LANES = 3; // 한 주에 보여줄 줄 수 (넘으면 +N)
 
-// 학교 일정을 숨김 저장할 때 쓰는 안정적인 키 (배열 순서와 무관)
-const hideKey = (e) => `${e.title}|${e.start}|${e.end}`;
+// 숨김 저장할 때 쓰는 안정적인 키 (배열 순서와 무관).
+// e-Class 항목은 학교 캘린더가 준 고유 id가 있어 그걸 우선 사용.
+const hideKey = (e) =>
+  e.source === "eclass" ? `eclass:${e.id}` : `${e.title}|${e.start}|${e.end}`;
+
+// e-Class 마감 일정(/api/eclass/calendar 결과)을 캘린더 일정 형식으로 변환
+function mapEclassEvent(ev) {
+  const d = new Date(ev.timestamp * 1000);
+  const dateStr = ymd(d);
+  return {
+    id: `ec${ev.id}`,
+    title: ev.title,
+    detail: ev.course ? `${ev.course} · ${ev.title}` : ev.title,
+    start: dateStr,
+    end: dateStr,
+    category: ev.type,
+    source: "eclass",
+    dueLabel: `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`,
+  };
+}
 
 /* ---------- 왼쪽 스와이프로 '숨김' 버튼 여는 행 ---------- */
 function SwipeRow({ children, onHide }) {
@@ -113,6 +132,11 @@ export default function CalendarPage() {
   const [hideGrad, setHideGrad] = useState(false);
   const dragRef = useRef(null);
 
+  // e-Class 연동 일정 (연결 안 돼 있으면 그냥 빈 목록으로 조용히 지나감)
+  const [eclassConnected, setEclassConnected] = useState(false);
+  const [eclassEvents, setEclassEvents] = useState([]);
+  const [eclassError, setEclassError] = useState(false);
+
   /* ---------- 저장된 설정·내 일정·숨김 불러오기 ---------- */
   useEffect(() => {
     const savedMode = localStorage.getItem("calendarMode");
@@ -161,22 +185,42 @@ export default function CalendarPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  /* ---------- e-Class 마감 일정 불러오기 (연결돼 있을 때만) ---------- */
+  useEffect(() => {
+    const url = localStorage.getItem("eclassCalUrl");
+    if (!url) return;
+    setEclassConnected(true);
+    fetch("/api/eclass/calendar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.events) setEclassEvents(data.events.map(mapEclassEvent));
+        else setEclassError(true);
+      })
+      .catch(() => setEclassError(true));
+  }, []);
+
   const hiddenSet = useMemo(() => new Set(hidden), [hidden]);
 
-  // 학교(숨김 제외) + 내 일정
+  // 학교(숨김 제외) + 내 일정 + e-Class 마감(숨김 제외)
   const allEvents = useMemo(() => {
     const school = schoolEvents.filter(
       (e) => !hiddenSet.has(hideKey(e)) && !(hideGrad && (e.detail || e.title || "").includes("대학원"))
     );
     const mine = personal.map((e) => ({ ...e, source: "me" }));
-    return [...school, ...mine];
-  }, [schoolEvents, personal, hiddenSet, hideGrad]);
+    const ecl = eclassEvents.filter((e) => !hiddenSet.has(hideKey(e)));
+    return [...school, ...mine, ...ecl];
+  }, [schoolEvents, personal, eclassEvents, hiddenSet, hideGrad]);
 
-  // 숨긴 학사일정(되돌리기 목록용)
-  const hiddenEvents = useMemo(
-    () => schoolEvents.filter((e) => hiddenSet.has(hideKey(e))),
-    [schoolEvents, hiddenSet]
-  );
+  // 숨긴 항목(되돌리기 목록용) — 학사일정 + e-Class 둘 다
+  const hiddenEvents = useMemo(() => {
+    const schoolHidden = schoolEvents.filter((e) => hiddenSet.has(hideKey(e)));
+    const eclHidden = eclassEvents.filter((e) => hiddenSet.has(hideKey(e)));
+    return [...schoolHidden, ...eclHidden];
+  }, [schoolEvents, eclassEvents, hiddenSet]);
 
   function eventsOn(dateStr) {
     return allEvents
@@ -184,10 +228,10 @@ export default function CalendarPage() {
       .sort((a, b) => a.start.localeCompare(b.start));
   }
 
-  function hideSchool(e) {
+  function hideEvent(e) {
     setHidden((h) => (h.includes(hideKey(e)) ? h : [...h, hideKey(e)]));
   }
-  function restoreSchool(key) {
+  function restoreEvent(key) {
     setHidden((h) => h.filter((k) => k !== key));
   }
 
@@ -374,6 +418,24 @@ export default function CalendarPage() {
         ))}
       </div>
 
+      {/* e-Class 연동 안내/에러 배너 */}
+      {!eclassConnected && (
+        <Link
+          href="/eclass"
+          className="mx-2 mb-1 block rounded-lg bg-[#eaf6fd] px-3 py-1.5 text-center text-[11px] font-bold text-[#0095da] active:opacity-70"
+        >
+          🔗 e-Class 연동하면 과제·시험 마감도 여기에 떠요 →
+        </Link>
+      )}
+      {eclassConnected && eclassError && (
+        <p className="mx-2 mb-1 rounded-lg bg-[#fdecec] px-3 py-1.5 text-center text-[11px] text-[#d05b6a]">
+          e-Class 일정을 불러오지 못했어요 ·{" "}
+          <Link href="/eclass" className="font-bold underline">
+            다시 연결하기
+          </Link>
+        </p>
+      )}
+
       {/* 달력 본문 (점=얇은 선 / 막대=글자 바, 둘 다 이어지는 레인) — 길면 위로 스크롤 */}
       <div className="flex-1 overflow-y-auto px-1">
         {weeks.map((week, wi) => {
@@ -502,6 +564,7 @@ export default function CalendarPage() {
                 <div className="min-w-0 flex-1 py-2 pr-2">
                   <p className="font-medium text-[#0c4470]">{e.detail || e.title}</p>
                   <p className="mt-0.5 text-xs" style={{ color: st.text }}>
+                    {e.source === "eclass" && `${e.dueLabel} 마감`}
                     {mine && !e.allDay && `${e.startTime}~${e.endTime} · `}
                     {isRange ? `${e.start.slice(5)} ~ ${e.end.slice(5)}` : mine && e.allDay ? "하루 종일" : ""}
                     {mine ? " · 내 일정" : ""}
@@ -534,20 +597,20 @@ export default function CalendarPage() {
               );
             }
 
-            // 학사일정: 왼쪽 스와이프 → 숨김
+            // 학사일정·e-Class: 왼쪽 스와이프 → 숨김
             return (
               <li key={e.id}>
-                <SwipeRow onHide={() => hideSchool(e)}>{body}</SwipeRow>
+                <SwipeRow onHide={() => hideEvent(e)}>{body}</SwipeRow>
               </li>
             );
           })}
         </ul>
 
-        {/* 숨긴 학사일정 되돌리기 */}
+        {/* 숨긴 항목 되돌리기 (학사일정 + e-Class) */}
         {hiddenEvents.length > 0 && (
           <details className="mt-4">
             <summary className="cursor-pointer text-xs font-bold text-[#0c4470]/40">
-              숨긴 학사일정 {hiddenEvents.length}개
+              숨긴 일정 {hiddenEvents.length}개
             </summary>
             <ul className="mt-2 flex flex-col gap-1.5">
               {hiddenEvents.map((e) => (
@@ -556,7 +619,7 @@ export default function CalendarPage() {
                     {e.detail || e.title}
                   </span>
                   <button
-                    onClick={() => restoreSchool(hideKey(e))}
+                    onClick={() => restoreEvent(hideKey(e))}
                     className="shrink-0 text-xs font-bold text-[#0095da]"
                   >
                     ↩ 되돌리기

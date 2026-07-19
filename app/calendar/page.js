@@ -108,6 +108,11 @@ export default function CalendarPage() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(null);
 
+  // 하단 일별목록 패널 높이(드래그) + 대학원 일괄숨김
+  const [panelH, setPanelH] = useState(280);
+  const [hideGrad, setHideGrad] = useState(false);
+  const dragRef = useRef(null);
+
   /* ---------- 저장된 설정·내 일정·숨김 불러오기 ---------- */
   useEffect(() => {
     const savedMode = localStorage.getItem("calendarMode");
@@ -117,6 +122,9 @@ export default function CalendarPage() {
       if (Array.isArray(my)) setPersonal(my);
       const hid = JSON.parse(localStorage.getItem("hiddenSchedule") || "[]");
       if (Array.isArray(hid)) setHidden(hid);
+      const ph = Number(localStorage.getItem("calPanelH"));
+      if (ph >= 120) setPanelH(ph);
+      setHideGrad(localStorage.getItem("hideGrad") === "1");
     } catch {}
     setPLoaded(true);
   }, []);
@@ -126,6 +134,12 @@ export default function CalendarPage() {
   useEffect(() => {
     if (pLoaded) localStorage.setItem("hiddenSchedule", JSON.stringify(hidden));
   }, [hidden, pLoaded]);
+  useEffect(() => {
+    if (pLoaded) localStorage.setItem("hideGrad", hideGrad ? "1" : "0");
+  }, [hideGrad, pLoaded]);
+  useEffect(() => {
+    if (pLoaded) localStorage.setItem("calPanelH", String(panelH));
+  }, [panelH, pLoaded]);
 
   function changeMode(next) {
     setMode(next);
@@ -151,10 +165,12 @@ export default function CalendarPage() {
 
   // 학교(숨김 제외) + 내 일정
   const allEvents = useMemo(() => {
-    const school = schoolEvents.filter((e) => !hiddenSet.has(hideKey(e)));
+    const school = schoolEvents.filter(
+      (e) => !hiddenSet.has(hideKey(e)) && !(hideGrad && (e.detail || e.title || "").includes("대학원"))
+    );
     const mine = personal.map((e) => ({ ...e, source: "me" }));
     return [...school, ...mine];
-  }, [schoolEvents, personal, hiddenSet]);
+  }, [schoolEvents, personal, hiddenSet, hideGrad]);
 
   // 숨긴 학사일정(되돌리기 목록용)
   const hiddenEvents = useMemo(
@@ -297,6 +313,21 @@ export default function CalendarPage() {
   }
   const setF = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
+  // 하단 패널 드래그 (위로 끌면 커지고, 달력은 위로 스크롤돼 잘림)
+  function panelDown(e) {
+    dragRef.current = { y: e.clientY, h: panelH };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  }
+  function panelMove(e) {
+    if (!dragRef.current) return;
+    const dy = dragRef.current.y - e.clientY;
+    const max = (typeof window !== "undefined" ? window.innerHeight : 800) - 200;
+    setPanelH(Math.max(120, Math.min(dragRef.current.h + dy, max)));
+  }
+  function panelUp() {
+    dragRef.current = null;
+  }
+
   return (
     <div className="flex h-full flex-col">
       {/* 헤더 */}
@@ -343,8 +374,8 @@ export default function CalendarPage() {
         ))}
       </div>
 
-      {/* 달력 본문 (점=얇은 선 / 막대=글자 바, 둘 다 이어지는 레인) */}
-      <div className="px-1">
+      {/* 달력 본문 (점=얇은 선 / 막대=글자 바, 둘 다 이어지는 레인) — 길면 위로 스크롤 */}
+      <div className="flex-1 overflow-y-auto px-1">
         {weeks.map((week, wi) => {
           const { shown, overflow } = layoutWeek(week);
           const usedLanes = shown.length ? Math.max(...shown.map((s) => s.lane)) + 1 : 0;
@@ -416,17 +447,42 @@ export default function CalendarPage() {
         })}
       </div>
 
-      {/* 선택 날짜 일정 목록 */}
-      <div className="mt-2 flex-1 overflow-y-auto border-t border-black/5 bg-white px-4 py-3">
-        <div className="mb-2 flex items-center justify-between">
-          <p className="text-sm font-bold text-[#0c4470]">{selLabel}</p>
-          <button
-            onClick={openAdd}
-            className="rounded-full bg-[#0095da] px-3 py-1 text-xs font-bold text-white active:opacity-80"
-          >
-            + 추가
-          </button>
+      {/* 선택 날짜 일정 목록 (드래그로 높이 조절) */}
+      <div className="flex shrink-0 flex-col border-t border-black/5 bg-white" style={{ height: panelH }}>
+        {/* 드래그 핸들 */}
+        <div
+          onPointerDown={panelDown}
+          onPointerMove={panelMove}
+          onPointerUp={panelUp}
+          onPointerCancel={panelUp}
+          className="flex cursor-row-resize items-center justify-center py-2"
+          style={{ touchAction: "none" }}
+        >
+          <div className="h-1 w-10 rounded-full bg-black/15" />
         </div>
+        {/* 고정 헤더: 날짜 + 대학원 숨김 + 추가 */}
+        <div className="flex items-center justify-between px-4 pb-2">
+          <p className="text-sm font-bold text-[#0c4470]">{selLabel}</p>
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-1 text-[11px] text-[#0c4470]/50">
+              <input
+                type="checkbox"
+                checked={hideGrad}
+                onChange={(e) => setHideGrad(e.target.checked)}
+                className="h-3.5 w-3.5 accent-[#0095da]"
+              />
+              대학원 숨김
+            </label>
+            <button
+              onClick={openAdd}
+              className="rounded-full bg-[#0095da] px-3 py-1 text-xs font-bold text-white active:opacity-80"
+            >
+              + 추가
+            </button>
+          </div>
+        </div>
+        {/* 스크롤 목록 */}
+        <div className="flex-1 overflow-y-auto px-4 pb-3">
 
         {loading && <p className="py-6 text-center text-sm text-[#0c4470]/40">불러오는 중…</p>}
         {error && <p className="py-6 text-center text-sm text-[#0c4470]/40">일정을 불러오지 못했어요.</p>}
@@ -510,6 +566,7 @@ export default function CalendarPage() {
             </ul>
           </details>
         )}
+        </div>
       </div>
 
       {/* 일정 추가/수정 시트 */}

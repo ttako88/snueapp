@@ -1,4 +1,4 @@
-"use client"; // 로그인 절차는 전부 브라우저에서 (비밀번호 없음 — 이메일 인증코드 방식)
+"use client"; // 로그인 절차는 전부 브라우저에서 (비밀번호 없음 — 이메일 로그인링크 방식)
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -6,16 +6,17 @@ import { useState } from "react";
 import { supabase } from "../lib/supabase";
 import { useAuth, signOut } from "../lib/useAuth";
 
-// 이메일 → 6자리 인증코드 → (첫 가입이면) 닉네임 만들기.
+// 이메일 → 메일의 로그인 링크 클릭 → (첫 가입이면) 닉네임 만들기.
 // 비밀번호를 아예 안 받으므로 유출·재사용 걱정이 없음. 세션은 supabase-js가
 // 브라우저에 보관하고 자동 갱신함.
+// (기본 메일 템플릿이 6자리 코드 없이 링크만 보내는 구조라 링크 방식 채택.
+//  나중에 커스텀 SMTP를 붙이면 코드 입력 방식으로 바꿀 수 있음.)
 export default function LoginPage() {
   const router = useRouter();
   const { session, profile, setProfile, loading } = useAuth();
 
-  const [step, setStep] = useState("email"); // email | code
+  const [step, setStep] = useState("email"); // email | sent
   const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
   const [nickname, setNickname] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null); // {type: "error"|"info", text}
@@ -111,8 +112,8 @@ export default function LoginPage() {
     );
   }
 
-  // ── 비로그인: 이메일 → 코드 ──
-  async function sendCode() {
+  // ── 비로그인: 이메일 → 로그인 링크 메일 ──
+  async function sendLink() {
     const em = email.trim();
     if (!/^\S+@\S+\.\S+$/.test(em)) {
       setMsg({ type: "error", text: "이메일 주소를 확인해주세요." });
@@ -120,31 +121,16 @@ export default function LoginPage() {
     }
     setBusy(true);
     setMsg(null);
-    const { error } = await supabase.auth.signInWithOtp({ email: em });
+    const { error } = await supabase.auth.signInWithOtp({
+      email: em,
+      options: { emailRedirectTo: `${window.location.origin}/login` },
+    });
     setBusy(false);
     if (error) {
       setMsg({ type: "error", text: `메일 발송에 실패했어요 (${error.message})` });
       return;
     }
-    setStep("code");
-    setMsg({ type: "info", text: "메일함에서 6자리 인증코드를 확인해주세요. (스팸함도 확인!)" });
-  }
-
-  async function verifyCode() {
-    const token = code.trim();
-    if (!/^\d{6}$/.test(token)) {
-      setMsg({ type: "error", text: "6자리 숫자 코드를 입력해주세요." });
-      return;
-    }
-    setBusy(true);
-    setMsg(null);
-    const { error } = await supabase.auth.verifyOtp({ email: email.trim(), token, type: "email" });
-    setBusy(false);
-    if (error) {
-      setMsg({ type: "error", text: "코드가 맞지 않거나 만료됐어요. 다시 확인해주세요." });
-      return;
-    }
-    // 성공 → useAuth가 세션을 감지, 프로필 유무에 따라 닉네임 단계로 자연 전환
+    setStep("sent");
   }
 
   return (
@@ -154,7 +140,7 @@ export default function LoginPage() {
           <>
             <p className="text-sm font-bold text-[#0c4470]">이메일로 간편 로그인</p>
             <p className="mt-1 text-xs text-[#0c4470]/50">
-              비밀번호가 없어요 — 메일로 받은 6자리 코드만 입력하면 끝. 처음이면 자동으로 가입돼요.
+              비밀번호가 없어요 — 메일로 오는 로그인 링크만 누르면 끝. 처음이면 자동으로 가입돼요.
             </p>
             <input
               value={email}
@@ -166,39 +152,28 @@ export default function LoginPage() {
             />
             {msg && <Msg msg={msg} />}
             <button
-              onClick={sendCode}
+              onClick={sendLink}
               disabled={busy}
               className="mt-3 w-full rounded-xl bg-[#0095da] py-2.5 text-sm font-bold text-white active:opacity-80 disabled:opacity-40"
             >
-              {busy ? "보내는 중..." : "인증코드 받기"}
+              {busy ? "보내는 중..." : "로그인 링크 받기"}
             </button>
           </>
         ) : (
           <>
-            <p className="text-sm font-bold text-[#0c4470]">인증코드 입력</p>
-            <p className="mt-1 text-xs text-[#0c4470]/50">{email} 으로 보낸 6자리 코드를 입력해주세요.</p>
-            <input
-              value={code}
-              onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-              placeholder="123456"
-              inputMode="numeric"
-              className="mt-3 w-full rounded-xl bg-[#f2f6fa] px-3 py-2.5 text-center text-lg font-bold tracking-[0.4em] outline-none focus:ring-2 focus:ring-[#0095da]/40"
-            />
+            <p className="text-2xl">📬</p>
+            <p className="mt-1 text-sm font-bold text-[#0c4470]">메일을 보냈어요!</p>
+            <p className="mt-1 text-xs leading-relaxed text-[#0c4470]/55">
+              <b>{email}</b> 메일함에서 <b>"Sign in"(로그인) 링크</b>를 눌러주세요.
+              지금 이 기기에서 열어야 이 브라우저로 로그인돼요. 메일이 안 보이면 스팸함도 확인!
+            </p>
             {msg && <Msg msg={msg} />}
-            <button
-              onClick={verifyCode}
-              disabled={busy}
-              className="mt-3 w-full rounded-xl bg-[#0095da] py-2.5 text-sm font-bold text-white active:opacity-80 disabled:opacity-40"
-            >
-              {busy ? "확인 중..." : "로그인"}
-            </button>
             <button
               onClick={() => {
                 setStep("email");
-                setCode("");
                 setMsg(null);
               }}
-              className="mt-2 w-full py-1 text-xs font-medium text-[#0c4470]/40"
+              className="mt-3 w-full py-1 text-xs font-medium text-[#0c4470]/40"
             >
               ‹ 이메일 다시 입력
             </button>

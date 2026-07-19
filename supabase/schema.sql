@@ -27,6 +27,7 @@ drop function if exists public.handle_post_update();
 drop function if exists public.handle_new_comment();
 drop function if exists public.record_comment_owner();
 drop function if exists public.handle_comment_update();
+drop function if exists public.enforce_snue_email();
 
 -- ---------- 프로필 (auth.users 1:1, 닉네임) ----------
 create table public.profiles (
@@ -43,6 +44,23 @@ create policy "프로필 생성: 본인 것만"
 create policy "프로필 수정: 본인 것만"
   on public.profiles for update to authenticated
   using (auth.uid() = id) with check (auth.uid() = id);
+
+-- 학교 이메일(@snue.ac.kr 및 그 하위 — @st. / @student. / @o365. 등 전부 허용)만
+-- 닉네임(프로필)을 만들 수 있게 막는다. 프로필이 없으면 posts/comments insert 트리거가
+-- 거부하므로, 여기서 막으면 사실상 커뮤니티 전체 이용이 막힌다. 로그인 자체(OTP 메일
+-- 수신)는 막지 않음 — Auth 단계 제한은 별도 기능(Auth Hooks)이 필요해 이번 범위에서 제외.
+create function public.enforce_snue_email()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare em text;
+begin
+  select email into em from auth.users where id = new.id;
+  if em is null or em !~* '^[^@]+@([a-z0-9-]+\.)*snue\.ac\.kr$' then
+    raise exception '서울교대 이메일(@snue.ac.kr 계열)로만 닉네임을 만들 수 있어요';
+  end if;
+  return new;
+end $$;
+create trigger enforce_snue_email_on_profile before insert on public.profiles
+  for each row execute function public.enforce_snue_email();
 
 -- ---------- 게시글 ----------
 create table public.posts (

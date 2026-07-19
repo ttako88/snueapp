@@ -11,6 +11,12 @@ import { useAuth, signOut } from "../lib/useAuth";
 // 브라우저에 보관하고 자동 갱신함.
 // (기본 메일 템플릿이 6자리 코드 없이 링크만 보내는 구조라 링크 방식 채택.
 //  나중에 커스텀 SMTP를 붙이면 코드 입력 방식으로 바꿀 수 있음.)
+//
+// 학교 이메일 검사는 여기서도 미리 하지만(불필요한 메일 발송 방지용 UX),
+// 진짜 잠금장치는 DB 트리거(enforce_snue_email, supabase/migrations/002_*.sql)다 —
+// 여기 정규식만 믿으면 API를 직접 호출해 우회할 수 있으므로 반드시 서버(DB)에서도 막아야 함.
+const SNUE_EMAIL_RE = /^[^\s@]+@([a-zA-Z0-9-]+\.)*snue\.ac\.kr$/;
+
 export default function LoginPage() {
   const router = useRouter();
   const { session, profile, setProfile, loading } = useAuth();
@@ -115,8 +121,8 @@ export default function LoginPage() {
   // ── 비로그인: 이메일 → 로그인 링크 메일 ──
   async function sendLink() {
     const em = email.trim();
-    if (!/^\S+@\S+\.\S+$/.test(em)) {
-      setMsg({ type: "error", text: "이메일 주소를 확인해주세요." });
+    if (!SNUE_EMAIL_RE.test(em)) {
+      setMsg({ type: "error", text: "서울교대 이메일(@snue.ac.kr 계열)만 가입할 수 있어요." });
       return;
     }
     setBusy(true);

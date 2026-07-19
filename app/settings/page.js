@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { SetupSheet } from "../components/Timetable";
 import { DEFAULT_SEMESTER, SEMESTER_LABELS, loadTimetableSetup, saveTimetableSetup } from "../lib/timetable";
+import { useAuth, signOut } from "../lib/useAuth";
 
 // 설정 항목 정의. 나중에 새 설정이 생기면 여기 섹션을 추가하면 됨
 // (앞으로 헤더 햄버거 메뉴로 옮기더라도 이 페이지 자체는 그대로 재사용).
@@ -12,6 +13,7 @@ export default function SettingsPage() {
   const [setup, setSetup] = useState(null); // 학년·과·학기
   const [eclassConnected, setEclassConnected] = useState(false);
   const [hideGrad, setHideGrad] = useState(false);
+  const { session, profile, loading: authLoading } = useAuth();
 
   const [setupOpen, setSetupOpen] = useState(false);
   const [formGrade, setFormGrade] = useState(3);
@@ -47,6 +49,36 @@ export default function SettingsPage() {
   return (
     <div className="flex flex-col gap-4 px-4 py-4">
       <h2 className="text-lg font-bold text-[#0c4470]">설정</h2>
+
+      {/* 계정 (게시판용 로그인) */}
+      <section className="rounded-2xl bg-white p-4 shadow-sm">
+        <p className="mb-1 text-xs font-bold text-[#0c4470]/40">계정</p>
+        {authLoading ? (
+          <p className="text-sm text-[#0c4470]/40">확인 중...</p>
+        ) : session ? (
+          <div className="flex w-full items-center justify-between">
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-medium text-[#0c4470]">
+                {profile ? profile.nickname : "닉네임 미설정"}
+              </span>
+              <span className="block truncate text-xs text-[#0c4470]/45">{session.user.email}</span>
+            </span>
+            <button
+              onClick={async () => {
+                await signOut();
+              }}
+              className="shrink-0 text-xs font-bold text-[#d05b6a]/80"
+            >
+              로그아웃
+            </button>
+          </div>
+        ) : (
+          <Link href="/login" className="flex w-full items-center justify-between">
+            <span className="text-sm text-[#0c4470]/50">로그인하면 게시판을 쓸 수 있어요</span>
+            <span className="shrink-0 text-xs font-bold text-[#0095da]">로그인 ›</span>
+          </Link>
+        )}
+      </section>
 
       {/* 내 시간표 */}
       <section className="rounded-2xl bg-white p-4 shadow-sm">

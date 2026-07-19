@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# 개인 자료 (실명·학번 등 포함, 공개 저장소에 올리지 않음)
+학교문의_이메일초안.md

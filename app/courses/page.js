@@ -2,7 +2,7 @@ import Link from "next/link";
 import Timetable from "../components/Timetable";
 
 // 강의 탭 허브 — 맨 위 '내 시간표' + 아래 도구 카드들.
-// 지금은 학점 계산기만 실제 동작, 나머지는 '준비 중'.
+// ready=true인 카드(학점계산기·마법사·e-Class)는 동작, 나머지는 '준비 중'.
 
 // 도구 카드 정의 (ready=true면 눌러서 들어감)
 const TOOLS = [

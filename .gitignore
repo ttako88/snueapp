@@ -32,6 +32,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# 단, 변수 목록 문서(값 없음)는 커밋한다
+!.env.example
 
 # vercel
 .vercel

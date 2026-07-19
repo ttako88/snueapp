@@ -5,7 +5,7 @@ import BottomNav from "./components/BottomNav";
 // 브라우저 탭에 뜨는 제목/설명
 export const metadata = {
   title: "서울교대 새록이",
-  description: "서울교육대학교 급식·학사일정·공지를 한 곳에서",
+  description: "서울교육대학교 급식·학사일정·공지·시간표, 그리고 커뮤니티까지 한 곳에서",
 };
 
 export default function RootLayout({ children }) {

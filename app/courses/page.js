@@ -8,6 +8,7 @@ import Timetable from "../components/Timetable";
 const TOOLS = [
   { href: "/courses/gpa", icon: "📊", title: "학점 계산기", desc: "성적 넣으면 평점 자동", ready: true },
   { href: "/courses/wizard", icon: "🧙", title: "시간표 마법사", desc: "교양·재이수 경우의 수", ready: true },
+  { href: "/eclass", icon: "🔗", title: "e-Class 연동", desc: "과제·영상강의 마감 가져오기", ready: true },
   { href: null, icon: "🔍", title: "강의 검색", desc: "전체 강의 시간표 조회", ready: false },
   { href: null, icon: "⭐", title: "강의평가", desc: "수강 후기·평점", ready: false },
 ];

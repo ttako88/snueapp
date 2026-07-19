@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { TimetableGrid } from "../../components/Timetable";
-import { ALL_COURSES, DAYS, DEPARTMENTS, colorFor, courseId } from "../../lib/timetable";
+import { ALL_COURSES, DAYS, DEPARTMENTS, DEFAULT_SEMESTER, colorFor, courseId, groupCourses } from "../../lib/timetable";
 import { generateTimetables } from "../../lib/wizard";
 
 const GRADES = [1, 2, 3, 4];
@@ -37,6 +37,9 @@ export default function WizardPage() {
     setLoaded(true);
   }, []);
 
+  // 검색은 항상 내 시간표와 같은 학기로 (A/B군마다 같은 강의가 매학기 열려 헷갈림 방지)
+  const semester = base[0]?.semester || DEFAULT_SEMESTER;
+
   const fixedCredits = useMemo(
     () => [...base, ...required].reduce((n, c) => n + (c.periods?.length || 0), 0),
     [base, required]
@@ -53,17 +56,18 @@ export default function WizardPage() {
   function removeRequired(c) {
     setRequired((rs) => rs.filter((x) => courseId(x) !== courseId(c)));
   }
-  function removeCandidate(c) {
-    setCandidates((cs) => cs.filter((x) => courseId(x) !== courseId(c)));
+  // 후보는 그룹(이수요건) 단위로 묶여 보이므로, 지울 때도 그룹 전체를 지움
+  const candidateGroups = useMemo(() => groupCourses(candidates), [candidates]);
+  function removeCandidateGroup(g) {
+    const ids = new Set(g.members.map(courseId));
+    setCandidates((cs) => cs.filter((c) => !ids.has(courseId(c))));
   }
-  function moveCandidate(i, dir) {
-    setCandidates((cs) => {
-      const next = [...cs];
-      const j = i + dir;
-      if (j < 0 || j >= next.length) return cs;
-      [next[i], next[j]] = [next[j], next[i]];
-      return next;
-    });
+  function reorderCandidateGroups(from, to) {
+    if (to < 0 || to >= candidateGroups.length || from === to) return;
+    const next = [...candidateGroups];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    setCandidates(next.flatMap((g) => g.members));
   }
   function toggleFreeDay(d) {
     setFreeDays((fs) => (fs.includes(d) ? fs.filter((x) => x !== d) : [...fs, d]));
@@ -184,7 +188,8 @@ export default function WizardPage() {
         <section>
           <h3 className="mb-1 text-sm font-bold text-[#0c4470]">듣고 싶은 후보 (우선순위 순)</h3>
           <p className="mb-3 text-xs text-[#0c4470]/50">
-            위에 있을수록 우선 고려돼요. 같은 시간대나 같은 과목명은 자동으로 택1 처리돼요.
+            위에 있을수록 우선 고려돼요. ⠿ 손잡이를 눌러 드래그하면 순서를 바꿀 수 있어요.
+            같은 이수요건(예: 운동과웰니스↔운동과건강디자인)이나 같은 과목명은 자동으로 택1 처리돼요.
           </p>
           <button
             onClick={() => setAddOpen("candidate")}
@@ -192,21 +197,10 @@ export default function WizardPage() {
           >
             + 후보 과목 검색
           </button>
-          {candidates.length === 0 ? (
+          {candidateGroups.length === 0 ? (
             <p className="py-6 text-center text-sm text-[#0c4470]/40">후보를 담아주세요. (교양 등)</p>
           ) : (
-            <ul className="flex flex-col gap-1.5">
-              {candidates.map((c, i) => (
-                <CourseRow
-                  key={courseId(c)}
-                  c={c}
-                  rank={i + 1}
-                  onRemove={() => removeCandidate(c)}
-                  onUp={i > 0 ? () => moveCandidate(i, -1) : undefined}
-                  onDown={i < candidates.length - 1 ? () => moveCandidate(i, 1) : undefined}
-                />
-              ))}
-            </ul>
+            <DragList groups={candidateGroups} onReorder={reorderCandidateGroups} onRemove={removeCandidateGroup} />
           )}
         </section>
       )}
@@ -296,9 +290,10 @@ export default function WizardPage() {
         <AddSheet
           mode={addOpen}
           excludeIds={excludeIds}
-          onAdd={(c) => {
-            if (addOpen === "required") setRequired((rs) => [...rs, c]);
-            else setCandidates((cs) => [...cs, c]);
+          semester={semester}
+          onAdd={(courses) => {
+            if (addOpen === "required") setRequired((rs) => [...rs, ...courses]);
+            else setCandidates((cs) => [...cs, ...courses]);
           }}
           onClose={() => setAddOpen(null)}
         />
@@ -307,16 +302,11 @@ export default function WizardPage() {
   );
 }
 
-/* ---------- 과목 한 줄 ---------- */
-function CourseRow({ c, rank, onRemove, onUp, onDown }) {
+/* ---------- 과목 한 줄 (고정·필수 목록용) ---------- */
+function CourseRow({ c, onRemove }) {
   const col = colorFor(c.name);
   return (
     <li className="flex items-center gap-2 rounded-xl bg-white p-2.5 shadow-sm">
-      {rank && (
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#eaf6fd] text-[10px] font-bold text-[#0095da]">
-          {rank}
-        </span>
-      )}
       <span className="h-8 w-1 shrink-0 rounded-full" style={{ backgroundColor: col.bar }} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium text-[#0c4470]">
@@ -324,12 +314,6 @@ function CourseRow({ c, rank, onRemove, onUp, onDown }) {
         </span>
         <span className="block truncate text-xs text-[#0c4470]/50">{c.day}{c.periods.join("")}교시 · {c.professor}</span>
       </span>
-      {onUp && (
-        <button onClick={onUp} className="px-1 text-[#0c4470]/30 active:text-[#0095da]" aria-label="위로">▲</button>
-      )}
-      {onDown && (
-        <button onClick={onDown} className="px-1 text-[#0c4470]/30 active:text-[#0095da]" aria-label="아래로">▼</button>
-      )}
       {onRemove && (
         <button onClick={onRemove} className="px-1 text-lg text-[#0c4470]/30 active:text-[#d05b6a]" aria-label="삭제">×</button>
       )}
@@ -337,16 +321,106 @@ function CourseRow({ c, rank, onRemove, onUp, onDown }) {
   );
 }
 
+/* ---------- 후보 목록: 드래그로 우선순위 재정렬 ---------- */
+// 같은 이수요건(그룹)은 한 줄로 묶여 표시·이동됨. 손잡이(⠿)를 눌러 위아래로
+// 끌면 임계값(행 높이의 절반)을 넘을 때마다 이웃과 순서를 바꿈 — 절대좌표
+// 계산 없이도 자연스러운 드래그 재정렬을 구현.
+function DragList({ groups, onReorder, onRemove }) {
+  const [dragIdx, setDragIdx] = useState(null);
+  const [offsetY, setOffsetY] = useState(0);
+  const startY = useRef(0);
+  const ROW_H = 60;
+
+  function down(i, e) {
+    setDragIdx(i);
+    startY.current = e.clientY;
+    setOffsetY(0);
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  }
+  function move(e) {
+    if (dragIdx === null) return;
+    const delta = e.clientY - startY.current;
+    setOffsetY(delta);
+    if (delta > ROW_H / 2 && dragIdx < groups.length - 1) {
+      onReorder(dragIdx, dragIdx + 1);
+      setDragIdx(dragIdx + 1);
+      startY.current = e.clientY;
+      setOffsetY(0);
+    } else if (delta < -ROW_H / 2 && dragIdx > 0) {
+      onReorder(dragIdx, dragIdx - 1);
+      setDragIdx(dragIdx - 1);
+      startY.current = e.clientY;
+      setOffsetY(0);
+    }
+  }
+  function up() {
+    setDragIdx(null);
+    setOffsetY(0);
+  }
+
+  return (
+    <ul className="flex flex-col gap-1.5">
+      {groups.map((g, i) => {
+        const c0 = g.members[0];
+        const col = colorFor(c0.name);
+        const dragging = dragIdx === i;
+        return (
+          <li
+            key={g.key}
+            className="flex items-center gap-2 rounded-xl bg-white p-2.5 shadow-sm"
+            style={{
+              transform: dragging ? `translateY(${offsetY}px) scale(1.02)` : undefined,
+              boxShadow: dragging ? "0 4px 14px rgba(0,0,0,.15)" : undefined,
+              position: "relative",
+              zIndex: dragging ? 10 : 1,
+              transition: dragging ? "none" : "transform .15s",
+            }}
+          >
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#eaf6fd] text-[10px] font-bold text-[#0095da]">
+              {i + 1}
+            </span>
+            <span className="h-8 w-1 shrink-0 rounded-full" style={{ backgroundColor: col.bar }} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium text-[#0c4470]">{g.label}</span>
+              <span className="block truncate text-xs text-[#0c4470]/50">
+                {g.isMulti ? `${g.members.length}개 중 자동 선택` : `${c0.day}${c0.periods.join("")}교시 · ${c0.professor}`}
+              </span>
+            </span>
+            <button onClick={() => onRemove(g)} className="px-1 text-lg text-[#0c4470]/30 active:text-[#d05b6a]" aria-label="삭제">×</button>
+            <button
+              onPointerDown={(e) => down(i, e)}
+              onPointerMove={move}
+              onPointerUp={up}
+              onPointerCancel={up}
+              className="px-1.5 text-lg text-[#0c4470]/30 active:text-[#0095da]"
+              style={{ touchAction: "none", cursor: "grab" }}
+              aria-label="드래그해서 순서 변경"
+            >
+              ⠿
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 /* ---------- 검색 시트 (필수/후보 공용) ---------- */
-function AddSheet({ mode, excludeIds, onAdd, onClose }) {
+// 같은 이수요건(reqGroup)이거나 같은 과목명이면 분반을 낱개로 안 보여주고 한 줄로 묶음.
+// 탭했을 때 동작은 모드에 따라 다름:
+//  - 필수: 정확히 재이수해야 하는 과목 "하나"를 골라야 하므로, 여러 개면 상세선택 후 그거 하나만 추가
+//  - 후보: 이수요건 자체가 후보이므로, 여러 개면 그룹 전체를 담아 마법사가 알아서 하나를 고르게 함
+function AddSheet({ mode, excludeIds, semester, onAdd, onClose }) {
   const [grade, setGrade] = useState(1);
   const [dept, setDept] = useState("전체");
   const [query, setQuery] = useState("");
+  const [groupDetail, setGroupDetail] = useState(null); // 필수모드 상세선택 중인 그룹
 
-  const results = useMemo(() => {
+  const groups = useMemo(() => {
     const q = query.trim();
     const seen = new Set();
-    return ALL_COURSES.filter((c) => {
+    const flat = ALL_COURSES.filter((c) => {
+      if (c.semester !== semester) return false;
       if (c.grade !== grade) return false;
       if (dept !== "전체" && c.dept !== dept) return false;
       if (q && !c.name.includes(q) && !c.professor.includes(q)) return false;
@@ -355,7 +429,20 @@ function AddSheet({ mode, excludeIds, onAdd, onClose }) {
       seen.add(k);
       return true;
     });
-  }, [grade, dept, query, excludeIds]);
+    return groupCourses(flat);
+  }, [grade, dept, query, excludeIds, semester]);
+
+  function tapGroup(g) {
+    if (g.members.length === 1) {
+      onAdd([g.members[0]]);
+      return;
+    }
+    if (mode === "required") {
+      setGroupDetail(g); // 필수는 반드시 정확한 그 과목 하나를 골라야 함
+    } else {
+      onAdd(g.members); // 후보는 그룹째로 — 마법사가 시간표에 맞는 걸 알아서 고름
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30" onClick={onClose}>
@@ -394,28 +481,72 @@ function AddSheet({ mode, excludeIds, onAdd, onClose }) {
           className="mb-3 w-full rounded-xl bg-[#f2f6fa] px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#0095da]/40"
         />
         <div className="flex-1 overflow-y-auto">
-          {results.length === 0 && <p className="py-8 text-center text-sm text-[#0c4470]/40">해당하는 강의가 없어요.</p>}
+          {groups.length === 0 && <p className="py-8 text-center text-sm text-[#0c4470]/40">해당하는 강의가 없어요.</p>}
           <ul className="flex flex-col gap-1.5">
-            {results.map((c) => (
-              <li key={courseId(c)}>
-                <button
-                  onClick={() => onAdd(c)}
-                  className="flex w-full items-center gap-2 rounded-xl bg-[#f7fafc] p-2.5 text-left active:bg-[#eaf6fd]"
-                >
-                  <span className="h-8 w-1 rounded-full" style={{ backgroundColor: colorFor(c.name).bar }} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium text-[#0c4470]">
-                      {c.name}{c.section ? ` (${c.section})` : ""} <span className="text-[10px] font-bold text-[#0095da]/70">{c.type}</span>
+            {groups.map((g) => {
+              const c0 = g.members[0];
+              return (
+                <li key={g.key}>
+                  <button
+                    onClick={() => tapGroup(g)}
+                    className="flex w-full items-center gap-2 rounded-xl bg-[#f7fafc] p-2.5 text-left active:bg-[#eaf6fd]"
+                  >
+                    <span className="h-8 w-1 rounded-full" style={{ backgroundColor: colorFor(c0.name).bar }} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-[#0c4470]">
+                        {g.label} <span className="text-[10px] font-bold text-[#0095da]/70">{c0.type}</span>
+                      </span>
+                      <span className="block truncate text-xs text-[#0c4470]/50">
+                        {g.isMulti
+                          ? `${g.members.length}개 중 택1 · ${c0.day}${c0.periods.join("")}교시 등`
+                          : `${c0.day}${c0.periods.join("")}교시 · ${c0.professor} · ${c0.room}`}
+                      </span>
                     </span>
-                    <span className="block truncate text-xs text-[#0c4470]/50">{c.day}{c.periods.join("")}교시 · {c.professor} · {c.room}</span>
-                  </span>
-                  <span className="shrink-0 text-lg font-bold text-[#0095da]">+</span>
-                </button>
-              </li>
-            ))}
+                    <span className="shrink-0 text-lg font-bold text-[#0095da]">{g.isMulti ? "›" : "+"}</span>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         </div>
       </div>
+
+      {/* 필수모드 상세선택: 여러 대체과목/분반 중 정확히 하나 고르기 */}
+      {groupDetail && (
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/40" onClick={(e) => { e.stopPropagation(); setGroupDetail(null); }}>
+          <div className="flex max-h-[70%] w-full max-w-[480px] flex-col rounded-t-2xl bg-white p-4" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-base font-bold text-[#0c4470]">{groupDetail.label}</h3>
+              <button onClick={() => setGroupDetail(null)} className="text-xl text-[#0c4470]/40">×</button>
+            </div>
+            <p className="mb-3 text-xs text-[#0c4470]/50">재이수하는 정확한 과목 하나를 골라주세요.</p>
+            <div className="flex-1 overflow-y-auto">
+              <ul className="flex flex-col gap-1.5">
+                {groupDetail.members.map((c) => (
+                  <li key={courseId(c)}>
+                    <button
+                      onClick={() => {
+                        onAdd([c]);
+                        setGroupDetail(null);
+                      }}
+                      className="flex w-full items-center gap-2 rounded-xl bg-[#f7fafc] p-2.5 text-left active:bg-[#eaf6fd]"
+                    >
+                      <span className="h-8 w-1 rounded-full" style={{ backgroundColor: colorFor(c.name).bar }} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium text-[#0c4470]">
+                          {c.name}{c.section ? ` (${c.section})` : ""}
+                        </span>
+                        <span className="block truncate text-xs text-[#0c4470]/50">{c.day}{c.periods.join("")}교시 · {c.professor} · {c.room}</span>
+                      </span>
+                      <span className="shrink-0 text-lg font-bold text-[#0095da]">+</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -6,10 +6,14 @@ import {
   DAYS,
   DEPARTMENTS,
   PERIOD_TIMES,
+  SEMESTERS,
+  SEMESTER_LABELS,
+  DEFAULT_SEMESTER,
   autofillCourses,
   colorFor,
   conflicts,
   courseId,
+  groupCourses,
   ALL_COURSES,
 } from "../lib/timetable";
 
@@ -39,10 +43,12 @@ export default function Timetable({ editable = true }) {
   const [setupOpen, setSetupOpen] = useState(false);
   const [formGrade, setFormGrade] = useState(3);
   const [formDept, setFormDept] = useState("");
+  const [formSemester, setFormSemester] = useState(DEFAULT_SEMESTER);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [searchGrade, setSearchGrade] = useState(1); // 강의 추가: 학년 필터
   const [searchDept, setSearchDept] = useState("전체"); // 강의 추가: 과 필터
+  const [groupDetail, setGroupDetail] = useState(null); // 분반/대체과목 상세선택 중인 그룹
   const [detail, setDetail] = useState(null); // 편집 중인 강의
   const [editForm, setEditForm] = useState(null);
 
@@ -64,10 +70,10 @@ export default function Timetable({ editable = true }) {
 
   function saveSetup() {
     if (!formDept) return;
-    const s = { grade: formGrade, dept: formDept };
+    const s = { grade: formGrade, dept: formDept, semester: formSemester };
     setSetup(s);
     localStorage.setItem("ttSetup", JSON.stringify(s));
-    setCourses(autofillCourses(formGrade, formDept));
+    setCourses(autofillCourses(formGrade, formDept, formSemester));
     setSetupOpen(false);
   }
   function toggleAxis() {
@@ -105,6 +111,7 @@ export default function Timetable({ editable = true }) {
   const openSetup = () => {
     setFormGrade(setup?.grade || 3);
     setFormDept(setup?.dept || "");
+    setFormSemester(setup?.semester || DEFAULT_SEMESTER);
     setSetupOpen(true);
   };
 
@@ -115,12 +122,15 @@ export default function Timetable({ editable = true }) {
     setSearchOpen(true);
   }
 
-  // 학년·과·검색어로 강의 필터 (이미 담은 건 제외)
+  // 학년·과·검색어로 강의 필터 (이미 담은 건 제외). 학기는 내 시간표와 항상 같은 학기로 고정
+  // — 학교가 A/B군마다 같은 강의를 매 학기 열다 보니 학기 섞으면 헷갈려서 검색도 시간표 학기로 묶음.
   const searchResults = useMemo(() => {
     const q = query.trim();
     const have = new Set(courses.map((c) => courseId(c)));
     const seen = new Set();
-    return ALL_COURSES.filter((c) => {
+    if (!setup) return [];
+    const flat = ALL_COURSES.filter((c) => {
+      if (c.semester !== setup.semester) return false;
       if (c.grade !== searchGrade) return false;
       if (searchDept !== "전체" && c.dept !== searchDept) return false;
       if (q && !c.name.includes(q) && !c.professor.includes(q)) return false;
@@ -129,7 +139,17 @@ export default function Timetable({ editable = true }) {
       seen.add(k);
       return true;
     });
-  }, [query, searchGrade, searchDept, courses]);
+    // 같은 이수요건(택1)이거나 같은 과목명이면 분반을 낱개로 안 보여주고 한 줄로 묶기
+    return groupCourses(flat);
+  }, [query, searchGrade, searchDept, courses, setup?.semester]);
+
+  function tapSearchGroup(g) {
+    if (g.members.length === 1) {
+      addCourse(g.members[0]);
+    } else {
+      setGroupDetail(g);
+    }
+  }
 
   if (!loaded) return null;
 
@@ -147,7 +167,7 @@ export default function Timetable({ editable = true }) {
           학년·과 선택하기
         </button>
         {setupOpen && (
-          <SetupSheet {...{ formGrade, setFormGrade, formDept, setFormDept, saveSetup }} onClose={() => setSetupOpen(false)} />
+          <SetupSheet {...{ formGrade, setFormGrade, formDept, setFormDept, formSemester, setFormSemester, saveSetup }} onClose={() => setSetupOpen(false)} />
         )}
       </div>
     ) : (
@@ -163,7 +183,10 @@ export default function Timetable({ editable = true }) {
       {/* 상단 바 */}
       <div className="mb-2 flex items-center justify-between">
         <div className="text-sm font-bold text-[#0c4470]">
-          내 시간표 <span className="font-medium text-[#0c4470]/50">{setup.grade}학년 · {setup.dept}과</span>
+          내 시간표{" "}
+          <span className="font-medium text-[#0c4470]/50">
+            {setup.grade}학년 · {setup.dept}과 · {SEMESTER_LABELS[setup.semester] || setup.semester}
+          </span>
         </div>
         <div className="flex items-center gap-1.5">
           <button onClick={toggleAxis} className="rounded-full bg-black/5 px-2.5 py-1 text-[11px] font-bold text-[#0c4470]/60">
@@ -190,7 +213,7 @@ export default function Timetable({ editable = true }) {
 
       {/* 셋업 시트 */}
       {setupOpen && (
-        <SetupSheet {...{ formGrade, setFormGrade, formDept, setFormDept, saveSetup }} onClose={() => setSetupOpen(false)} />
+        <SetupSheet {...{ formGrade, setFormGrade, formDept, setFormDept, formSemester, setFormSemester, saveSetup }} onClose={() => setSetupOpen(false)} />
       )}
 
       {/* 강의 추가 시트 (학년·과 토글) */}
@@ -238,14 +261,58 @@ export default function Timetable({ editable = true }) {
                 <p className="py-8 text-center text-sm text-[#0c4470]/40">해당하는 강의가 없어요.</p>
               )}
               <ul className="flex flex-col gap-1.5">
-                {searchResults.map((c) => (
+                {searchResults.map((g) => {
+                  const c0 = g.members[0];
+                  return (
+                    <li key={g.key}>
+                      <button onClick={() => tapSearchGroup(g)} className="flex w-full items-center gap-2 rounded-xl bg-[#f7fafc] p-2.5 text-left active:bg-[#eaf6fd]">
+                        <span className="h-8 w-1 rounded-full" style={{ backgroundColor: colorFor(c0.name).bar }} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium text-[#0c4470]">
+                            {g.label}{" "}
+                            <span className="text-[10px] font-bold text-[#0095da]/70">{c0.type}</span>
+                          </span>
+                          <span className="block truncate text-xs text-[#0c4470]/50">
+                            {g.isMulti
+                              ? `${g.members.length}개 중 택1 · ${c0.day}${c0.periods.join("")}교시 등`
+                              : `${c0.day}${c0.periods.join("")}교시 · ${c0.professor} · ${c0.room}`}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-lg font-bold text-[#0095da]">{g.isMulti ? "›" : "+"}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 분반/대체과목 상세선택 (같은 이수요건 안에서 고르기) */}
+      {groupDetail && (
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/30" onClick={() => setGroupDetail(null)}>
+          <div className="flex max-h-[75%] w-full max-w-[480px] flex-col rounded-t-2xl bg-white p-4" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-base font-bold text-[#0c4470]">{groupDetail.label}</h3>
+              <button onClick={() => setGroupDetail(null)} className="text-xl text-[#0c4470]/40">×</button>
+            </div>
+            <p className="mb-3 text-xs text-[#0c4470]/50">이 중 하나를 골라 담으세요.</p>
+            <div className="flex-1 overflow-y-auto">
+              <ul className="flex flex-col gap-1.5">
+                {groupDetail.members.map((c) => (
                   <li key={courseId(c)}>
-                    <button onClick={() => addCourse(c)} className="flex w-full items-center gap-2 rounded-xl bg-[#f7fafc] p-2.5 text-left active:bg-[#eaf6fd]">
+                    <button
+                      onClick={() => {
+                        addCourse(c);
+                        setGroupDetail(null);
+                      }}
+                      className="flex w-full items-center gap-2 rounded-xl bg-[#f7fafc] p-2.5 text-left active:bg-[#eaf6fd]"
+                    >
                       <span className="h-8 w-1 rounded-full" style={{ backgroundColor: colorFor(c.name).bar }} />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-medium text-[#0c4470]">
-                          {c.name}{c.section ? ` (${c.section})` : ""}{" "}
-                          <span className="text-[10px] font-bold text-[#0095da]/70">{c.type}</span>
+                          {c.name}{c.section ? ` (${c.section})` : ""}
                         </span>
                         <span className="block truncate text-xs text-[#0c4470]/50">{c.day}{c.periods.join("")}교시 · {c.professor} · {c.room}</span>
                       </span>
@@ -387,13 +454,26 @@ export function TimetableGrid({ courses, axis, onBlock }) {
 }
 
 /* ---------- 셋업 시트 ---------- */
-function SetupSheet({ formGrade, setFormGrade, formDept, setFormDept, saveSetup, onClose }) {
+function SetupSheet({ formGrade, setFormGrade, formDept, setFormDept, formSemester, setFormSemester, saveSetup, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30" onClick={onClose}>
       <div className="w-full max-w-[480px] rounded-t-2xl bg-white p-4 pb-6 text-left" onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-base font-bold text-[#0c4470]">학년 · 심화과정</h3>
+          <h3 className="text-base font-bold text-[#0c4470]">학기 · 학년 · 심화과정</h3>
           <button onClick={onClose} className="text-xl text-[#0c4470]/40">×</button>
+        </div>
+
+        <p className="mb-1.5 text-xs font-bold text-[#0c4470]/50">학기</p>
+        <div className="mb-3 grid grid-cols-2 gap-2">
+          {SEMESTERS.map((s) => (
+            <button
+              key={s}
+              onClick={() => setFormSemester(s)}
+              className={`rounded-xl py-2 text-sm font-bold ${formSemester === s ? "bg-[#0095da] text-white" : "bg-[#f2f6fa] text-[#0c4470]/60"}`}
+            >
+              {SEMESTER_LABELS[s]}
+            </button>
+          ))}
         </div>
 
         <p className="mb-1.5 text-xs font-bold text-[#0c4470]/50">학년</p>

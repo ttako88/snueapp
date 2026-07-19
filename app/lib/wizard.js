@@ -3,7 +3,9 @@
 // 입력:
 //   base       : 고정 과목 배열 (내 시간표의 전공/심화/교직) — 항상 포함
 //   required   : 필수 과목 배열 (재이수/놓친 과목) — 항상 포함
-//   candidates : 후보 과목 배열 (교양 등). 같은 name = 같은 과목의 여러 분반(택1).
+//   candidates : 후보 과목 배열 (교양 등). 같은 reqGroup(학교 원본의 "택1" 이수요건,
+//                예: 운동과웰니스↔운동과건강디자인처럼 이름이 달라도 하나임)이거나
+//                reqGroup이 없으면 같은 name = 같은 과목의 여러 분반, 모두 택1로 묶임.
 //                각 후보에 priority(1=최우선) 부여 가능
 //   maxCredits : 희망 수강학점 상한 (예: 20, 21, 23)
 //   freeDays   : 공강 원하는 요일 배열 (예: ["금"])
@@ -16,6 +18,8 @@
 const slotsOf = (c) => c.periods.map((p) => `${c.day}${p}`);
 const creditOf = (c) => c.periods.length; // 1교시 = 1학점
 const courseKey = (c) => `${c.name}|${c.section || ""}|${c.day}${c.periods.join("")}`;
+// 이수요건 그룹 키: reqGroup(색상 기반 택1 표시)이 있으면 그걸로, 없으면 과목명으로
+const groupKeyOf = (c) => c.reqGroup || c.name;
 
 export function generateTimetables({
   base = [],
@@ -54,19 +58,20 @@ export function generateTimetables({
     baseWarnings.push("고정/필수에 1·2교시 수업이 있어요");
   if (fixedCredits > maxCredits) baseWarnings.push(`고정/필수만 ${fixedCredits}학점이라 상한(${maxCredits})을 이미 넘어요`);
 
-  // 2) 후보 분반 필터 (조건 위반·고정충돌·학점초과 제거) → 과목명별 그룹(택1)
+  // 2) 후보 분반 필터 (조건 위반·고정충돌·학점초과 제거) → 이수요건별 그룹(택1)
   const groups = new Map();
   for (const c of candidates) {
     if (freeSet.has(c.day)) continue;
     if (avoidEarly && c.periods.some((p) => p <= 2)) continue;
     if (slotsOf(c).some((s) => occupied0.has(s))) continue;
     if (fixedCredits + creditOf(c) > maxCredits) continue;
-    if (!groups.has(c.name)) groups.set(c.name, { name: c.name, priority: c.priority ?? 999, sections: [] });
-    groups.get(c.name).sections.push(c);
+    const key = groupKeyOf(c);
+    if (!groups.has(key)) groups.set(key, { key, label: c.groupLabel || c.name, priority: c.priority ?? 999, sections: [] });
+    groups.get(key).sections.push(c);
   }
   const groupList = [...groups.values()].sort((a, b) => a.priority - b.priority);
   const N = groupList.length;
-  const groupIndex = new Map(groupList.map((g, i) => [g.name, i]));
+  const groupIndex = new Map(groupList.map((g, i) => [g.key, i]));
 
   // 3) 백트래킹으로 조합 생성 (각 과목: 건너뛰기 또는 한 분반 선택)
   const combos = [];
@@ -96,9 +101,9 @@ export function generateTimetables({
   function isMaximal(combo) {
     const occ = new Set(occupied0);
     for (const c of combo.courses) for (const s of slotsOf(c)) occ.add(s);
-    const names = new Set(combo.courses.map((c) => c.name));
+    const usedKeys = new Set(combo.courses.map(groupKeyOf));
     for (const g of groupList) {
-      if (names.has(g.name)) continue;
+      if (usedKeys.has(g.key)) continue;
       for (const sec of g.sections) {
         if (slotsOf(sec).some((s) => occ.has(s))) continue;
         if (fixedCredits + combo.addedCredits + creditOf(sec) > maxCredits) continue;
@@ -116,7 +121,7 @@ export function generateTimetables({
     if (seen.has(key)) continue;
     seen.add(key);
     let score = 0;
-    for (const c of combo.courses) score += N - groupIndex.get(c.name); // 상위 우선순위일수록 큼
+    for (const c of combo.courses) score += N - groupIndex.get(groupKeyOf(c)); // 상위 우선순위일수록 큼
     maximal.push({ ...combo, score, totalCredits: fixedCredits + combo.addedCredits });
   }
   maximal.sort((a, b) => b.score - a.score || b.totalCredits - a.totalCredits);

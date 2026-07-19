@@ -1,8 +1,10 @@
-"use client"; // 로그인 입력·연결 상태를 브라우저에서 처리
+"use client"; // 토큰 입력·연결 상태를 브라우저에서 처리
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { eventStyle } from "../lib/eventStyle";
+
+const TOKEN_PAGE = "https://lms.snue.ac.kr/user/managetoken.php";
 
 // e-Class 활동 종류 → 우리 앱 색(캘린더와 동일 규칙)
 function typeStyle(modulename) {
@@ -14,17 +16,13 @@ function typeStyle(modulename) {
 }
 
 export default function EclassPage() {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [tokenInput, setTokenInput] = useState("");
   const [connected, setConnected] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const [events, setEvents] = useState(null); // 마감 목록
-  const [evLoading, setEvLoading] = useState(false);
-  const [evError, setEvError] = useState("");
+  const [events, setEvents] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  // 이미 연결돼 있는지 확인 (토큰은 이 브라우저에만 저장됨)
   useEffect(() => {
     const t = localStorage.getItem("eclassToken");
     setConnected(Boolean(t));
@@ -33,9 +31,9 @@ export default function EclassPage() {
   }, []);
 
   // 마감 일정 불러오기 (토큰은 본문으로 전달 — 주소에 안 남게)
-  async function loadDeadlines(token) {
-    setEvLoading(true);
-    setEvError("");
+  async function loadDeadlines(token, { isNew = false } = {}) {
+    setLoading(true);
+    setError("");
     try {
       const res = await fetch("/api/eclass/deadlines", {
         method: "POST",
@@ -43,40 +41,23 @@ export default function EclassPage() {
         body: JSON.stringify({ token }),
       });
       const data = await res.json();
-      if (data.events) setEvents(data.events);
-      else {
-        setEvError(data.error || "일정을 불러오지 못했어요.");
-        if (data.expired) {
+      if (data.events) {
+        setEvents(data.events);
+        if (isNew) {
+          localStorage.setItem("eclassToken", token); // 확인된 토큰만 저장
+          setConnected(true);
+          setTokenInput("");
+        }
+      } else {
+        setError(
+          isNew
+            ? "이 키로는 연결되지 않았어요. e-Class에서 복사한 값이 맞는지 확인해 주세요."
+            : data.error || "일정을 불러오지 못했어요."
+        );
+        if (!isNew && data.expired) {
           localStorage.removeItem("eclassToken");
           setConnected(false);
         }
-      }
-    } catch {
-      setEvError("일정을 불러오는 중 문제가 생겼어요.");
-    } finally {
-      setEvLoading(false);
-    }
-  }
-
-  async function submit(e) {
-    e.preventDefault();
-    setError("");
-    setLoading(true);
-    try {
-      const res = await fetch("/api/eclass/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
-      const data = await res.json();
-      if (data.token) {
-        localStorage.setItem("eclassToken", data.token);
-        setConnected(true);
-        setUsername("");
-        setPassword(""); // 입력값 즉시 비움 (화면에도 안 남게)
-        loadDeadlines(data.token);
-      } else {
-        setError(data.error || "로그인에 실패했어요.");
       }
     } catch {
       setError("연결 중 문제가 생겼어요. 잠시 후 다시 시도해 주세요.");
@@ -85,9 +66,17 @@ export default function EclassPage() {
     }
   }
 
+  function connect(e) {
+    e.preventDefault();
+    const t = tokenInput.trim();
+    if (t) loadDeadlines(t, { isNew: true });
+  }
+
   function disconnect() {
     localStorage.removeItem("eclassToken");
     setConnected(false);
+    setEvents(null);
+    setError("");
   }
 
   if (!loaded) return null;
@@ -99,23 +88,20 @@ export default function EclassPage() {
         <h2 className="text-lg font-bold text-[#0c4470]">e-Class 연동</h2>
       </div>
 
-      {/* ── 개인정보 안내 (가장 중요) ── */}
+      {/* ── 개인정보 안내 ── */}
       <section className="rounded-2xl border border-[#0095da]/20 bg-[#eaf6fd] p-4">
-        <p className="mb-2 text-sm font-bold text-[#0c4470]">🔒 이 화면은 &lsquo;거쳐가는 통로&rsquo;일 뿐이에요</p>
+        <p className="mb-2 text-sm font-bold text-[#0c4470]">🔒 비밀번호는 아예 받지 않아요</p>
         <ul className="flex flex-col gap-1.5 text-xs leading-relaxed text-[#0c4470]/75">
-          <li>• 이 앱은 여러분의 <b>아이디·비밀번호를 저장하지 않아요.</b></li>
-          <li>• 기록(로그)으로도 <b>남기지 않아요.</b></li>
-          <li>• 입력한 정보는 학교 e-Class 서버로 <b>그대로 전달만</b> 되고, 전달이 끝나는 순간 사라져요.</li>
-          <li>• 학교가 발급해준 <b>&lsquo;이용권(토큰)&rsquo;만</b> 여러분 <b>기기(이 브라우저)에</b> 저장돼요. 우리 서버엔 안 올라가요.</li>
-          <li>• 연결은 <b>언제든 해제</b>할 수 있고, 해제하면 이용권도 기기에서 지워져요.</li>
+          <li>• 이 앱에는 <b>비밀번호를 입력하는 칸 자체가 없어요.</b></li>
+          <li>• 로그인은 <b>학교 e-Class 사이트에서만</b> 하시게 돼요.</li>
+          <li>• 이 앱은 학교가 발급한 <b>&lsquo;보안 키(이용권)&rsquo;만</b> 받아서, 여러분의 <b>마감 일정을 읽기만</b> 해요.</li>
+          <li>• 그 키는 <b>여러분 기기(이 브라우저)에만</b> 저장돼요. 우리 서버엔 안 올라가요.</li>
+          <li>• 언제든 <b>연결 해제</b> 가능하고, 해제하면 기기에서도 지워져요.</li>
         </ul>
         <p className="mt-2.5 border-t border-[#0095da]/15 pt-2 text-[11px] leading-relaxed text-[#0c4470]/55">
-          기술적으로는 학교 e-Class(무들)의 공식 <b>모바일 앱용 토큰 API</b>(<code className="rounded bg-white/60 px-1">login/token.php</code>)를
-          그대로 사용해요. 학교 앱이 로그인하는 방식과 똑같아요.
-          <br />
-          코드가 궁금하면 직접 확인할 수 있어요 →{" "}
+          학교 e-Class(무들)의 공식 <b>보안 키</b> 기능을 그대로 사용해요. 코드는 공개돼 있어요 →{" "}
           <a
-            href="https://github.com/ttako88/snueapp/blob/main/app/api/eclass/token/route.js"
+            href="https://github.com/ttako88/snueapp/blob/main/app/api/eclass/deadlines/route.js"
             target="_blank"
             rel="noopener noreferrer"
             className="font-bold text-[#0095da] underline"
@@ -126,13 +112,12 @@ export default function EclassPage() {
       </section>
 
       {connected ? (
-        /* ── 연결 완료 상태 ── */
         <>
           <section className="flex items-center gap-3 rounded-2xl bg-white p-4 shadow-sm">
             <span className="text-2xl">✅</span>
             <div className="min-w-0 flex-1">
               <p className="font-bold text-[#0c4470]">e-Class에 연결됐어요!</p>
-              <p className="text-xs text-[#0c4470]/50">이용권은 이 기기에만 저장돼 있어요</p>
+              <p className="text-xs text-[#0c4470]/50">보안 키는 이 기기에만 저장돼 있어요</p>
             </div>
             <button
               onClick={disconnect}
@@ -154,9 +139,9 @@ export default function EclassPage() {
               </button>
             </div>
 
-            {evLoading && <p className="py-6 text-center text-sm text-[#0c4470]/40">불러오는 중…</p>}
-            {evError && <p className="rounded-xl bg-[#fdecec] px-3 py-2.5 text-xs text-[#d05b6a]">{evError}</p>}
-            {!evLoading && !evError && events?.length === 0 && (
+            {loading && <p className="py-6 text-center text-sm text-[#0c4470]/40">불러오는 중…</p>}
+            {error && <p className="rounded-xl bg-[#fdecec] px-3 py-2.5 text-xs text-[#d05b6a]">{error}</p>}
+            {!loading && !error && events?.length === 0 && (
               <p className="py-6 text-center text-sm text-[#0c4470]/40">
                 다가오는 마감이 없어요. (방학이면 비어 있는 게 정상이에요!)
               </p>
@@ -169,11 +154,7 @@ export default function EclassPage() {
                 const dLabel = `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
                 const dday = Math.ceil((d - new Date()) / 86400000);
                 return (
-                  <li
-                    key={ev.id}
-                    className="flex items-stretch gap-2.5 overflow-hidden rounded-xl"
-                    style={{ backgroundColor: st.bg }}
-                  >
+                  <li key={ev.id} className="flex items-stretch gap-2.5 overflow-hidden rounded-xl" style={{ backgroundColor: st.bg }}>
                     <span className="w-1 shrink-0" style={{ backgroundColor: st.main }} />
                     <div className="min-w-0 flex-1 py-2 pr-2">
                       <p className="truncate font-medium text-[#0c4470]">{ev.title}</p>
@@ -195,45 +176,56 @@ export default function EclassPage() {
           </section>
         </>
       ) : (
-        /* ── 로그인 폼 ── */
-        <form onSubmit={submit} className="flex flex-col gap-2.5">
-          <div>
-            <label className="mb-1 block text-xs font-bold text-[#0c4470]/50">e-Class 아이디 (학번)</label>
-            <input
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              autoComplete="username"
-              placeholder="예: 20251423"
-              className="w-full rounded-xl bg-white px-3 py-3 text-sm text-[#0c4470] shadow-sm outline-none placeholder:text-[#0c4470]/30 focus:ring-2 focus:ring-[#0095da]/40"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-bold text-[#0c4470]/50">비밀번호</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              placeholder="e-Class 비밀번호"
-              className="w-full rounded-xl bg-white px-3 py-3 text-sm text-[#0c4470] shadow-sm outline-none placeholder:text-[#0c4470]/30 focus:ring-2 focus:ring-[#0095da]/40"
-            />
-          </div>
+        <>
+          {/* ── 보안 키 가져오는 방법 ── */}
+          <section className="rounded-2xl bg-white p-4 shadow-sm">
+            <p className="mb-3 text-sm font-bold text-[#0c4470]">🔑 보안 키 가져오는 방법</p>
+            <ol className="flex flex-col gap-2.5 text-xs leading-relaxed text-[#0c4470]/75">
+              <li>
+                <b className="text-[#0095da]">1.</b> 아래 버튼을 눌러 <b>학교 e-Class에 로그인</b>하세요.
+                <br />
+                <span className="text-[#0c4470]/50">(로그인은 학교 사이트에서만 이뤄져요)</span>
+              </li>
+              <li>
+                <b className="text-[#0095da]">2.</b> 열린 <b>&lsquo;보안 키(Security keys)&rsquo;</b> 페이지에서
+                <br />
+                <b>Moodle 모바일 웹 서비스</b> 항목의 <b>키 값을 복사</b>하세요.
+              </li>
+              <li>
+                <b className="text-[#0095da]">3.</b> 아래 칸에 <b>붙여넣고 연결</b>하면 끝이에요!
+              </li>
+            </ol>
+            <a
+              href={TOKEN_PAGE}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 block rounded-xl bg-[#0095da] py-2.5 text-center text-sm font-bold text-white active:opacity-80"
+            >
+              e-Class에서 보안 키 열기 ↗
+            </a>
+          </section>
 
-          {error && (
-            <p className="rounded-xl bg-[#fdecec] px-3 py-2.5 text-xs font-medium text-[#d05b6a]">{error}</p>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading || !username.trim() || !password.trim()}
-            className="mt-1 w-full rounded-xl bg-[#0095da] py-3 text-sm font-bold text-white active:opacity-80 disabled:opacity-40"
-          >
-            {loading ? "연결하는 중…" : "e-Class 연결하기"}
-          </button>
-          <p className="text-center text-[11px] text-[#0c4470]/40">
-            학교 e-Class 계정으로 로그인해요 (SNUE 포털과 같은 계정)
-          </p>
-        </form>
+          {/* ── 토큰 붙여넣기 ── */}
+          <form onSubmit={connect} className="flex flex-col gap-2">
+            <label className="text-xs font-bold text-[#0c4470]/50">복사한 보안 키 붙여넣기</label>
+            <input
+              value={tokenInput}
+              onChange={(e) => setTokenInput(e.target.value)}
+              placeholder="예: a1b2c3d4e5f6..."
+              autoComplete="off"
+              spellCheck={false}
+              className="w-full rounded-xl bg-white px-3 py-3 font-mono text-sm text-[#0c4470] shadow-sm outline-none placeholder:font-sans placeholder:text-[#0c4470]/30 focus:ring-2 focus:ring-[#0095da]/40"
+            />
+            {error && <p className="rounded-xl bg-[#fdecec] px-3 py-2.5 text-xs font-medium text-[#d05b6a]">{error}</p>}
+            <button
+              type="submit"
+              disabled={loading || !tokenInput.trim()}
+              className="mt-1 w-full rounded-xl bg-[#0095da] py-3 text-sm font-bold text-white active:opacity-80 disabled:opacity-40"
+            >
+              {loading ? "확인하는 중…" : "연결하기"}
+            </button>
+          </form>
+        </>
       )}
     </div>
   );

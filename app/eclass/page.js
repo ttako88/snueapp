@@ -92,7 +92,14 @@ export default function EclassPage() {
         </ul>
         <p className="mt-2.5 border-t border-[#0095da]/15 pt-2 text-[11px] leading-relaxed text-[#0c4470]/55">
           학교 e-Class(무들)가 학생에게 공식 제공하는 <b>달력 구독(iCal)</b> 기능을 그대로 써요.
-          구글 캘린더에 연결하는 것과 똑같은 방식이에요. 코드 →{" "}
+          구글 캘린더에 연결하는 것과 똑같은 방식이에요.
+          <br />
+          <span className="text-[#0c4470]/45">
+            ※ 우리 학교 e-Class는 통합로그인(SSO)을 쓰기 때문에, 아이디·비밀번호로 연동하는
+            방식은 학교 서버가 애초에 지원하지 않아요. 그래서 이 방식을 씁니다.
+          </span>
+          <br />
+          코드 →{" "}
           <a
             href="https://github.com/ttako88/snueapp/blob/main/app/api/eclass/calendar/route.js"
             target="_blank"

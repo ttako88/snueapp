@@ -209,9 +209,9 @@ test("registry: 성공 → 핸들러 실행 + record_maintenance_run(ok=true, pr
   assert.equal(rec[0].args.p_error_code, null);
 });
 
-test("registry: 미구현 job → not_implemented throw", async () => {
+test("registry: HANDLERS에 없는 job → not_implemented throw", async () => {
   const client = mockClient();
-  await assert.rejects(() => runJob("purge-verification-docs", { client, budgetMs: 60000 }), (e) => e.failedStep === "not_implemented");
+  await assert.rejects(() => runJob("nonexistent-job", { client, budgetMs: 60000 }), (e) => e.failedStep === "not_implemented");
 });
 
 test("registry: 잡 실패 → record(ok=false, 안전코드) 후 원 오류 재던짐", async () => {
@@ -225,12 +225,5 @@ test("registry: 잡 실패 → record(ok=false, 안전코드) 후 원 오류 재
   assert.equal(rec[0].args.p_error_code, "notify");
 });
 
-test("registry: batch 기록 RPC 실패는 작업 결과를 덮어쓰지 않음", async () => {
-  const client = mockClient((name) => {
-    if (name === "record_maintenance_run") return { data: null, error: { message: "rec down" } };
-    if (name === "run_stale_review_notifications") return { data: 1, error: null };
-    return { data: 0, error: null };
-  });
-  const r = await runJob("stale-reviews", { client, budgetMs: 60000 }); // record 실패해도 성공 반환
-  assert.equal(r.processed, 1);
-});
+// (구 동작 "record 실패해도 성공 반환"은 GPT 2A 보완으로 폐기 — 이제 성공+기록실패는
+//  maintenance_record로 표면화된다. 해당 계약은 maintenance-2b.test.mjs가 검증.)

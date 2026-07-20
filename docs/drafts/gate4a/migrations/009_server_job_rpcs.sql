@@ -334,10 +334,11 @@ $$;
 revoke execute on function public.claim_accounts_for_deletion(int) from public, anon, authenticated;
 grant  execute on function public.claim_accounts_for_deletion(int) to service_role;
 
--- D-2. 삭제 진행 중(deleting) 회원의 아직 안 지워진 인증 원본 경로 반환 (Auth 삭제 전 Storage 정리용).
---   deleting 상태에서만 반환(오남용 방지) + 빈/널 경로 제외. 경로는 서버 생성 값만 저장돼 있음.
+-- D-2. 삭제 진행 중(deleting) 회원의 아직 안 지워진 인증 원본 (req_id + 경로) 반환.
+--   Storage 삭제 후 각 request를 mark_verification_doc_purged로 정리하기 위해 req_id 동반.
+--   deleting 상태에서만 반환(오남용 방지) + 빈/널 경로 제외.
 create or replace function private.get_member_verification_paths(p_member_id uuid)
-returns table(storage_path text)
+returns table(req_id bigint, storage_path text)
 language plpgsql security definer set search_path='' as $$
 begin
   if not exists (select 1 from private.members m
@@ -347,7 +348,7 @@ begin
   -- 정확히 '<member_id>/' prefix 아래 객체만 반환. 비정상 경로(.., 선행 slash, 빈 값)는 제외.
   --   bucket 이름은 DB가 다루지 않고 서버 모듈이 고정 문자열 'verification-docs'로만 사용한다.
   return query
-  select r.storage_path from private.verification_requests r
+  select r.id, r.storage_path from private.verification_requests r
    where r.member_id = p_member_id
      and r.storage_path is not null and length(r.storage_path) > 0
      and r.storage_path like (p_member_id::text || '/%')
@@ -355,7 +356,7 @@ begin
      and left(r.storage_path, 1) <> '/';
 end $$;
 create or replace function public.get_member_verification_paths(p_member_id uuid)
-returns table(storage_path text)
+returns table(req_id bigint, storage_path text)
 language sql security definer set search_path='' as $$
   select * from private.get_member_verification_paths(p_member_id);
 $$;

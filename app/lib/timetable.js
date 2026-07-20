@@ -160,6 +160,30 @@ export function loadAllSemesterCourses() {
   return readSemStore();
 }
 
+// ── 사용자 정의 일정 (근로·알바·약속·마이크로디그리 등) ──
+// 공식 강의(ttSemesters)와 "완전히 분리된" 저장소. 자동채움·마법사·이수이력은 이 값을
+// 절대 읽지 않으므로, 커스텀 일정을 넣어도 공식 강의 데이터/마법사 결과가 바뀌지 않는다.
+// 시각은 교시가 아니라 임의의 시작/종료 시간(HH:MM)이라 근로·알바 같은 일정도 담긴다.
+// 스키마: ttCustom = { "2026-2": [{ id, title, day, start, end }], ... }
+const CUSTOM_STORE_KEY = "ttCustom";
+function readCustomStore() {
+  try {
+    const raw = localStorage.getItem(CUSTOM_STORE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+export function loadCustomEvents(semester) {
+  const store = readCustomStore();
+  return Array.isArray(store[semester]) ? store[semester] : [];
+}
+export function saveCustomEvents(semester, events) {
+  const store = readCustomStore();
+  store[semester] = events;
+  localStorage.setItem(CUSTOM_STORE_KEY, JSON.stringify(store));
+}
+
 // 기준 학기·학년으로 다른 학기의 내 학년을 역산. (예: 2026-2에 2학년이면 2025-2는 1학년)
 // 1~4 범위 밖(입학 전/졸업 후)이면 null.
 export function gradeForSemester(baseSemester, baseGrade, targetSemester) {

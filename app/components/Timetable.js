@@ -13,6 +13,8 @@ import {
   saveTimetableSetup,
   loadSemesterCourses,
   saveSemesterCourses,
+  loadCustomEvents,
+  saveCustomEvents,
   gradeForSemester,
   autofillCourses,
   colorFor,
@@ -31,20 +33,34 @@ const toMin = (hhmm) => {
   const [h, m] = hhmm.split(":").map(Number);
   return h * 60 + m;
 };
-// 강의가 차지하는 실제 시각 [시작분, 끝분]
-function courseSpanMin(c) {
+// 블록이 차지하는 실제 시각 [시작분, 끝분].
+// 공식 강의는 교시(PERIOD_TIMES)로, 사용자 정의 일정은 임의 시작/종료 시간으로 계산.
+function blockSpanMin(c) {
+  if (c.custom) return [toMin(c.start), toMin(c.end)];
   const minP = Math.min(...c.periods);
   const maxP = Math.max(...c.periods);
   return [toMin(PERIOD_TIMES[minP - 1].start), toMin(PERIOD_TIMES[maxP - 1].end)];
 }
+// 블록이 그리드에 놓일 수 있는가 (강의=교시 존재, 커스텀=시작·끝 존재)
+const blockPlaceable = (c) => (c.custom ? Boolean(c.start && c.end) : Boolean(c.periods?.length));
+// 블록 고유 키 (커스텀은 id, 강의는 courseId)
+const blockKey = (c) => (c.custom ? `custom:${c.id}` : courseId(c));
 const PXMIN = 0.9; // 1분당 픽셀 (그리드 범위는 실제 수업에 맞춰 자동 계산)
+
+const DAY_LABELS = { 월: "월", 화: "화", 수: "수", 목: "목", 금: "금" };
 
 export default function Timetable({ editable = true }) {
   const [setup, setSetup] = useState(null);
   const [viewSem, setViewSem] = useState(null); // 지금 보고 있는 학기 (기본 = 설정 학기)
   const [courses, setCourses] = useState([]);
+  const [custom, setCustom] = useState([]); // 사용자 정의 일정 (공식 강의와 분리 저장)
   const [axis, setAxis] = useState("period"); // period | time
   const [loaded, setLoaded] = useState(false);
+
+  // 사용자 정의 일정 추가/수정 시트
+  const [customOpen, setCustomOpen] = useState(false);
+  const [editingCustomId, setEditingCustomId] = useState(null);
+  const [customForm, setCustomForm] = useState(null);
 
   const [setupOpen, setSetupOpen] = useState(false);
   const [formGrade, setFormGrade] = useState(3);
@@ -67,6 +83,7 @@ export default function Timetable({ editable = true }) {
         setSetup(s);
         setViewSem(s.semester);
         setCourses(loadSemesterCourses(s.semester) || []);
+        setCustom(loadCustomEvents(s.semester));
       }
       if (a === "period" || a === "time") setAxis(a);
     } catch {}
@@ -75,6 +92,12 @@ export default function Timetable({ editable = true }) {
   useEffect(() => {
     if (loaded && viewSem) saveSemesterCourses(viewSem, courses);
   }, [courses, loaded, viewSem]);
+  useEffect(() => {
+    if (loaded && viewSem) saveCustomEvents(viewSem, custom);
+  }, [custom, loaded, viewSem]);
+
+  // 그리드에는 공식 강의 + 사용자 정의 일정을 합쳐서만 넘긴다 (저장은 각각 분리 유지).
+  const blocks = useMemo(() => [...courses, ...custom], [courses, custom]);
 
   function saveSetup() {
     if (!formDept) return;
@@ -82,6 +105,7 @@ export default function Timetable({ editable = true }) {
     setSetup(s);
     setViewSem(s.semester);
     setCourses(loadSemesterCourses(s.semester) || []);
+    setCustom(loadCustomEvents(s.semester)); // 자동채움은 공식 강의만 리셋 — 커스텀 일정은 보존
     setSetupOpen(false);
   }
 
@@ -89,6 +113,7 @@ export default function Timetable({ editable = true }) {
   function switchSem(sem) {
     setViewSem(sem);
     setCourses(loadSemesterCourses(sem) || []);
+    setCustom(loadCustomEvents(sem));
   }
   const viewGrade = setup && viewSem ? gradeForSemester(setup.semester, setup.grade, viewSem) : null;
   function autofillViewSem() {
@@ -139,6 +164,33 @@ export default function Timetable({ editable = true }) {
     setSearchDept("전체");
     setQuery("");
     setSearchOpen(true);
+  }
+
+  /* ---------- 사용자 정의 일정 ---------- */
+  function openAddCustom() {
+    setEditingCustomId(null);
+    setCustomForm({ title: "", day: "월", start: "18:00", end: "20:00" });
+    setCustomOpen(true);
+  }
+  function openEditCustom(ev) {
+    setEditingCustomId(ev.id);
+    setCustomForm({ title: ev.title, day: ev.day, start: ev.start, end: ev.end });
+    setCustomOpen(true);
+  }
+  function saveCustom() {
+    const f = customForm;
+    if (!f || !f.title.trim() || !f.start || !f.end || f.end <= f.start) return;
+    const base = { title: f.title.trim(), day: f.day, start: f.start, end: f.end };
+    if (editingCustomId) {
+      setCustom((cs) => cs.map((x) => (x.id === editingCustomId ? { ...x, ...base } : x)));
+    } else {
+      setCustom((cs) => [...cs, { id: crypto.randomUUID(), custom: true, ...base }]);
+    }
+    setCustomOpen(false);
+  }
+  function deleteCustom() {
+    if (editingCustomId) setCustom((cs) => cs.filter((x) => x.id !== editingCustomId));
+    setCustomOpen(false);
   }
 
   // 학년·과·검색어로 강의 필터 (이미 담은 건 제외). 학기는 내 시간표와 항상 같은 학기로 고정
@@ -216,6 +268,9 @@ export default function Timetable({ editable = true }) {
               <button onClick={openSearch} className="rounded-full bg-[#0095da] px-2.5 py-1 text-[11px] font-bold text-white">
                 + 강의
               </button>
+              <button onClick={openAddCustom} className="rounded-full bg-[#57a06f] px-2.5 py-1 text-[11px] font-bold text-white">
+                + 일정
+              </button>
               <button onClick={openSetup} className="rounded-full bg-black/5 px-2.5 py-1 text-[11px] font-bold text-[#0c4470]/60">
                 설정
               </button>
@@ -259,10 +314,12 @@ export default function Timetable({ editable = true }) {
         </div>
       )}
 
-      <TimetableGrid courses={courses} axis={axis} onBlock={openCell} />
+      <TimetableGrid courses={blocks} axis={axis} onBlock={(c) => (c.custom ? openEditCustom(c) : openCell(c))} />
 
       {editable && (
-        <p className="mt-1.5 text-center text-[11px] text-[#0c4470]/40">칸을 누르면 강의실·교수·메모를 고칠 수 있어요</p>
+        <p className="mt-1.5 text-center text-[11px] text-[#0c4470]/40">
+          강의 칸은 강의실·교수·메모를, 📌 일정 칸은 내용을 눌러 고칠 수 있어요
+        </p>
       )}
 
       {/* 셋업 시트 */}
@@ -380,6 +437,75 @@ export default function Timetable({ editable = true }) {
         </div>
       )}
 
+      {/* 사용자 정의 일정 추가/수정 시트 */}
+      {customOpen && customForm && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30" onClick={() => setCustomOpen(false)}>
+          <div className="w-full max-w-[480px] rounded-t-2xl bg-white p-4 pb-6" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-base font-bold text-[#0c4470]">{editingCustomId ? "일정 수정" : "일정 추가"}</h3>
+              <button onClick={() => setCustomOpen(false)} className="text-xl text-[#0c4470]/40">×</button>
+            </div>
+            <p className="mb-3 text-xs text-[#0c4470]/50">근로·알바·약속·마이크로디그리 등 강의 외 일정을 시간표에 함께 표시해요.</p>
+
+            <input
+              autoFocus
+              value={customForm.title}
+              onChange={(e) => setCustomForm((f) => ({ ...f, title: e.target.value }))}
+              placeholder="예: 근로장학, 알바, 스터디 약속"
+              className="mb-3 w-full rounded-xl bg-[#f2f6fa] px-3 py-2.5 text-sm text-[#0c4470] outline-none placeholder:text-[#0c4470]/30 focus:ring-2 focus:ring-[#0095da]/40"
+            />
+
+            <p className="mb-1.5 text-xs font-bold text-[#0c4470]/50">요일</p>
+            <div className="mb-3 flex gap-2">
+              {DAYS.map((d) => (
+                <button
+                  key={d}
+                  onClick={() => setCustomForm((f) => ({ ...f, day: d }))}
+                  className={`flex-1 rounded-xl py-2 text-sm font-bold ${customForm.day === d ? "bg-[#0095da] text-white" : "bg-[#f2f6fa] text-[#0c4470]/55"}`}
+                >
+                  {DAY_LABELS[d]}
+                </button>
+              ))}
+            </div>
+
+            <p className="mb-1.5 text-xs font-bold text-[#0c4470]/50">시간</p>
+            <div className="mb-4 flex items-center gap-2">
+              <input
+                type="time"
+                value={customForm.start}
+                onChange={(e) => setCustomForm((f) => ({ ...f, start: e.target.value }))}
+                className="flex-1 rounded-xl bg-[#f2f6fa] px-3 py-2.5 text-sm text-[#0c4470] outline-none"
+              />
+              <span className="text-[#0c4470]/40">~</span>
+              <input
+                type="time"
+                value={customForm.end}
+                onChange={(e) => setCustomForm((f) => ({ ...f, end: e.target.value }))}
+                className="flex-1 rounded-xl bg-[#f2f6fa] px-3 py-2.5 text-sm text-[#0c4470] outline-none"
+              />
+            </div>
+            {customForm.end <= customForm.start && (
+              <p className="mb-3 text-[11px] text-[#d05b6a]">끝나는 시간이 시작 시간보다 늦어야 해요.</p>
+            )}
+
+            <div className="flex gap-2">
+              {editingCustomId && (
+                <button onClick={deleteCustom} className="rounded-xl bg-[#fdecec] px-4 py-3 text-sm font-bold text-[#d05b6a] active:opacity-80">
+                  삭제
+                </button>
+              )}
+              <button
+                onClick={saveCustom}
+                disabled={!customForm.title.trim() || customForm.end <= customForm.start}
+                className="flex-1 rounded-xl bg-[#0095da] py-3 text-sm font-bold text-white active:opacity-80 disabled:opacity-40"
+              >
+                {editingCustomId ? "수정 완료" : "저장"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 칸 편집 시트 */}
       {detail && editForm && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30" onClick={() => setDetail(null)}>
@@ -430,8 +556,8 @@ export function TimetableGrid({ courses, axis, onBlock }) {
   const AXIS_W = 26;
   const cols = `${AXIS_W}px repeat(5, 1fr)`;
 
-  // 그리드 세로 범위를 실제 수업에 맞춰 자동 계산 (맨 위부터 시작)
-  const spans = courses.filter((c) => c.periods?.length).map(courseSpanMin);
+  // 그리드 세로 범위를 실제 수업/일정에 맞춰 자동 계산 (맨 위부터 시작)
+  const spans = courses.filter(blockPlaceable).map(blockSpanMin);
   const minStart = spans.length ? Math.min(...spans.map((s) => s[0])) : 540; // 없으면 09:00
   const maxEnd = spans.length ? Math.max(...spans.map((s) => s[1])) : 1020; // 17:00
   const startHour = Math.floor(minStart / 60);
@@ -475,13 +601,13 @@ export function TimetableGrid({ courses, axis, onBlock }) {
           {DAYS.map((d) => (
             <div key={d} className="relative border-l border-black/5">
               {courses
-                .filter((c) => c.day === d && c.periods?.length)
+                .filter((c) => c.day === d && blockPlaceable(c))
                 .map((c) => {
-                  const [s, e] = courseSpanMin(c);
-                  const col = colorFor(c.name);
+                  const [s, e] = blockSpanMin(c);
+                  const col = colorFor(c.custom ? c.title : c.name);
                   return (
                     <button
-                      key={courseId(c)}
+                      key={blockKey(c)}
                       onClick={onBlock ? () => onBlock(c) : undefined}
                       className="absolute flex flex-col overflow-hidden rounded-md p-1 text-left leading-tight"
                       style={{
@@ -491,11 +617,23 @@ export function TimetableGrid({ courses, axis, onBlock }) {
                         right: 2,
                         backgroundColor: col.bg,
                         borderLeft: `3px solid ${col.bar}`,
+                        // 사용자 정의 일정은 점선 테두리로 공식 강의와 시각적으로 구분
+                        border: c.custom ? `1px dashed ${col.bar}` : undefined,
+                        borderLeftWidth: 3,
                       }}
                     >
-                      <span className="block truncate text-[10px] font-bold text-[#0c4470]">{c.name}</span>
-                      <span className="block truncate text-[9px] text-[#0c4470]/55">{c.room}</span>
-                      {c.memo && <span className="block truncate text-[9px] text-[#0c4470]/45">📝 {c.memo}</span>}
+                      {c.custom ? (
+                        <>
+                          <span className="block truncate text-[10px] font-bold text-[#0c4470]">📌 {c.title}</span>
+                          <span className="block truncate text-[9px] text-[#0c4470]/55">{c.start}~{c.end}</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="block truncate text-[10px] font-bold text-[#0c4470]">{c.name}</span>
+                          <span className="block truncate text-[9px] text-[#0c4470]/55">{c.room}</span>
+                          {c.memo && <span className="block truncate text-[9px] text-[#0c4470]/45">📝 {c.memo}</span>}
+                        </>
+                      )}
                     </button>
                   );
                 })}

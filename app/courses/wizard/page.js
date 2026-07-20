@@ -454,14 +454,31 @@ function DragList({ groups, onReorder, onRemove }) {
   );
 }
 
+/* ---------- 3단 체크박스(전체/부분/없음) 표시 ---------- */
+function CheckBox({ state }) {
+  // state: "all" | "partial" | "none"
+  return (
+    <span
+      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] border text-[11px] font-bold ${
+        state === "none" ? "border-[#0c4470]/25 bg-white text-transparent" : "border-[#0095da] bg-[#0095da] text-white"
+      }`}
+    >
+      {state === "all" ? "✓" : state === "partial" ? "–" : ""}
+    </span>
+  );
+}
+
 /* ---------- 검색 시트 (필수/후보 공용) ---------- */
-// 같은 이수요건(reqGroup)이거나 같은 과목명이면 분반을 낱개로 안 보여주고 한 줄로 묶음.
-// 필수·후보 모두 그룹째 담음 — 어느 분반/대체과목을 들을지는 마법사가 조합할 때
-// 시간표에 맞춰 고르므로, 여기서 하나를 강제로 고르게 하면 마법사의 의미가 없음.
+// 같은 이수요건(reqGroup)이거나 같은 과목명이면 분반을 한 줄(대분류)로 묶어 보여준다.
+// 대분류를 그대로 담으면 모든 분반이 후보가 되고 마법사가 시간 맞는 하나를 고른다(한 번에 등록).
+// 다만 교수·시간대가 마음에 안 드는 분반은 대분류를 펼쳐 개별 체크해제할 수 있고,
+// 그 경우 선택한 분반만 담긴다.
 function AddSheet({ mode, excludeIds, taken, semester, onAdd, onClose }) {
   const [grade, setGrade] = useState(1);
   const [dept, setDept] = useState("전체");
   const [query, setQuery] = useState("");
+  const [expanded, setExpanded] = useState(null); // 펼친 대분류 key
+  const [deselected, setDeselected] = useState({}); // { [groupKey]: Set(courseId) } — 사용자가 뺀 분반
 
   const groups = useMemo(() => {
     const q = query.trim();
@@ -485,8 +502,45 @@ function AddSheet({ mode, excludeIds, taken, semester, onAdd, onClose }) {
     return groupCourses(flat);
   }, [grade, dept, query, excludeIds, semester, mode, taken]);
 
-  function tapGroup(g) {
-    onAdd(g.members.length === 1 ? [g.members[0]] : g.members); // 그룹째 — 분반 선택은 마법사 몫
+  const offOf = (g) => deselected[g.key] || null;
+  const selectedMembers = (g) => {
+    const off = offOf(g);
+    return off ? g.members.filter((c) => !off.has(courseId(c))) : g.members;
+  };
+  const selState = (g) => {
+    const n = selectedMembers(g).length;
+    return n === 0 ? "none" : n === g.members.length ? "all" : "partial";
+  };
+  const isOff = (g, c) => {
+    const off = offOf(g);
+    return off ? off.has(courseId(c)) : false;
+  };
+  function toggleSection(g, c) {
+    const id = courseId(c);
+    setDeselected((prev) => {
+      const cur = new Set(prev[g.key] || []);
+      cur.has(id) ? cur.delete(id) : cur.add(id);
+      return { ...prev, [g.key]: cur };
+    });
+  }
+  function toggleAll(g) {
+    // 전체 선택 상태면 모두 해제, 아니면 모두 선택 (표준 3단 체크박스 동작)
+    setDeselected((prev) => ({
+      ...prev,
+      [g.key]: selState(g) === "all" ? new Set(g.members.map(courseId)) : new Set(),
+    }));
+  }
+  // 대분류에서 현재 선택된(체크된) 분반만 담는다. 아무것도 안 펼쳤으면 전체가 담긴다.
+  function addGroup(g) {
+    const members = selectedMembers(g);
+    if (members.length === 0) return;
+    onAdd(members);
+    setDeselected((prev) => {
+      const n = { ...prev };
+      delete n[g.key];
+      return n;
+    });
+    setExpanded(null);
   }
 
   return (
@@ -531,25 +585,74 @@ function AddSheet({ mode, excludeIds, taken, semester, onAdd, onClose }) {
           <ul className="flex flex-col gap-1.5">
             {groups.map((g) => {
               const c0 = g.members[0];
+              const multi = g.isMulti;
+              const st = selState(g);
+              const open = expanded === g.key;
+              const selCount = selectedMembers(g).length;
               return (
-                <li key={g.key}>
-                  <button
-                    onClick={() => tapGroup(g)}
-                    className="flex w-full items-center gap-2 rounded-xl bg-[#f7fafc] p-2.5 text-left active:bg-[#eaf6fd]"
-                  >
-                    <span className="h-8 w-1 rounded-full" style={{ backgroundColor: colorFor(c0.name).bar }} />
-                    <span className="min-w-0 flex-1">
+                <li key={g.key} className="overflow-hidden rounded-xl bg-[#f7fafc]">
+                  <div className="flex items-center gap-2 p-2.5">
+                    <span className="h-8 w-1 shrink-0 rounded-full" style={{ backgroundColor: colorFor(c0.name).bar }} />
+                    <button
+                      onClick={() => (multi ? setExpanded(open ? null : g.key) : addGroup(g))}
+                      className="min-w-0 flex-1 text-left"
+                    >
                       <span className="block truncate text-sm font-medium text-[#0c4470]">
                         {g.label} <span className="text-[10px] font-bold text-[#0095da]/70">{c0.type}</span>
                       </span>
                       <span className="block truncate text-xs text-[#0c4470]/50">
-                        {g.isMulti
-                          ? `${g.members.length}개 중 택1 · ${c0.day}${c0.periods.join("")}교시 등`
+                        {multi
+                          ? `분반 ${g.members.length}개${st === "partial" ? ` · ${selCount}개 선택` : ""} · 펼쳐서 분반 선택`
                           : `${c0.day}${c0.periods.join("")}교시 · ${c0.professor} · ${c0.room}`}
                       </span>
-                    </span>
-                    <span className="shrink-0 text-lg font-bold text-[#0095da]">+</span>
-                  </button>
+                    </button>
+                    {multi && (
+                      <button
+                        onClick={() => setExpanded(open ? null : g.key)}
+                        className="px-1 text-[11px] text-[#0c4470]/40"
+                        aria-label={open ? "분반 접기" : "분반 펼치기"}
+                      >
+                        {open ? "▲" : "▼"}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => addGroup(g)}
+                      disabled={selCount === 0}
+                      className="shrink-0 rounded-full bg-[#0095da] px-2.5 py-1 text-xs font-bold text-white active:opacity-80 disabled:opacity-30"
+                    >
+                      {multi && st === "partial" ? `+${selCount}` : "+"}
+                    </button>
+                  </div>
+
+                  {multi && open && (
+                    <div className="border-t border-black/5 bg-white px-2.5 py-2">
+                      <button onClick={() => toggleAll(g)} className="mb-1.5 flex items-center gap-2">
+                        <CheckBox state={st} />
+                        <span className="text-xs font-bold text-[#0c4470]/60">전체 {g.members.length}개 분반</span>
+                      </button>
+                      <ul className="flex flex-col">
+                        {g.members.map((c) => (
+                          <li key={courseId(c)}>
+                            <button
+                              onClick={() => toggleSection(g, c)}
+                              className="flex w-full items-center gap-2 py-1 text-left active:opacity-70"
+                            >
+                              <CheckBox state={isOff(g, c) ? "none" : "all"} />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-xs font-medium text-[#0c4470]">
+                                  {c.professor}
+                                  {c.section ? ` · ${c.section}분반` : ""}
+                                </span>
+                                <span className="block truncate text-[11px] text-[#0c4470]/45">
+                                  {c.day}{c.periods.join("")}교시 · {c.room}
+                                </span>
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </li>
               );
             })}

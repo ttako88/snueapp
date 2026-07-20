@@ -1,6 +1,6 @@
 # Gate 3 — 커뮤니티 기반 설계 확정서
 
-- 작성: 2026-07-20, Claude (Fable 5) / **v1.3** — GPT 최종 정오표 13건 반영 + 사용자 확정 탈퇴자 콘텐츠 유지 정책 통합 (§2 이원화·§4.1 2단계 제출·§13 탈퇴 정책 신설)
+- 작성: 2026-07-20, Claude (Fable 5) / **v1.4** — Gate 4a dev 리허설 실측 반영: §4.1 학번 8자리 확정, §5.2 소프트 삭제를 definer RPC 경로로 전환(RLS UPDATE↔SELECT 가시성 충돌 해소), 마이그레이션 파일 001~008 순번. (v1.3: GPT 정오표 13건 + 탈퇴자 콘텐츠 유지 정책)
 - 상위 문서: [ARCHITECTURE_AUDIT_PHASE1.md](ARCHITECTURE_AUDIT_PHASE1.md) v1.2 (Gate 1 승인본)
 - **이 게이트의 산출물은 이 문서뿐** — 코드·DB·Storage·설정 변경 없음. 실린 SQL은 Gate 4a에서 dev 리허설 후 실행될 초안
 
@@ -166,8 +166,10 @@ auth.users 생성 (가입)
 
 posts SELECT (USING): `is_active_member() and deleted_at is null and hidden_at is null and board_access_ok(board_id) and not is_blocked_author('post', id)`
 posts INSERT (WITH CHECK): `is_writable_member() and board_writable(board_id)` + 트리거(닉네임 강제 기입·owners 기록은 auth.uid() 기준·별칭 0 부여)
-posts UPDATE (USING+WITH CHECK 모두): `is_writable_member() and exists(post_owners: auth.uid())` + 트리거가 board_id·카운터·author 표시·created_at 변경 거부. soft delete(deleted_at 설정)는 같은 update 경로, 일반 수정과 함께 작성자 본인만
+posts UPDATE (USING+WITH CHECK 모두): `is_writable_member() and exists(post_owners: auth.uid())`. **클라이언트 직접 UPDATE 대상은 title·body만** (컬럼 grant로 제한). 트리거는 title/body 수정 시 updated_at만 갱신
 posts DELETE: 정책 없음 (hard delete 불가)
+
+**⚠️ 소프트 삭제 = definer RPC (v1.4 — dev 실측 결함 수정)**: `deleted_at` 설정을 authenticated UPDATE로 하면, posts_select 정책의 `deleted_at is null` 때문에 **결과 행이 SELECT 가시성을 잃어** PostgreSQL RLS UPDATE(결과 행이 SELECT 정책으로도 보이길 요구)가 "new row violates RLS"로 거부한다 — 작성자가 자기 글을 삭제할 수 없는 결함. 따라서 **soft delete는 `soft_delete_post(post_id)`·`soft_delete_comment(comment_id)` definer RPC로만** (007_soft_delete_rpc.sql). 불변식: authenticated EXECUTE, auth.uid() 판정, is_writable+소유권 검증, `deleted_at is null` 행만, 삭제시각 clock_timestamp(), 존재하지않음·타인·이미삭제는 동일 no-op(존재정보 비노출), comment_count는 실제 1행 삭제 시만 1회 감소. 클라이언트 deleted_at UPDATE 권한 제거. (v1.3의 "soft delete=같은 update 경로"를 대체)
 
 comments: 위와 동일 원칙 + SELECT/INSERT에 **부모 post 열람 가능 조건**(부모가 삭제·숨김·비공개 게시판이면 불가) + 차단 필터.
 

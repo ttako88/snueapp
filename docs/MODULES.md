@@ -36,8 +36,8 @@ tests/<기능>.test.mjs         ← node --test
 
 | 모듈 | 상태 | DB | 선행조건 |
 |---|---|---|---|
-| 강의조회 `courseSearch` | ✅ 켜짐 | 불필요 | 없음 — 즉시 동작 |
-| 강의평가 `courseReview` | 🔲 대기 | 필요 | Gate 4a 배포 |
+| 강의조회 `courseSearch` | ✅ 켜짐 | 불필요 | 없음 — 즉시 동작 (2022~2026 8개 학기) |
+| 강의평가 `courseReview` | 🟡 DB 초안 | 필요 (`pending/010`) | Gate 4a 배포 + GPT 검수 + dev 리허설 |
 | 게시판 공지 고정 `boardNotice` | 🔲 대기 | 필요 | Gate 4a 배포 |
 | 추천/반대 `postVote` | 🔲 대기 | 필요 | Gate 4a 배포 |
 | 스크랩 `bookmark` | 🔲 대기 | 필요 | Gate 4a 배포 |

@@ -62,8 +62,16 @@ create table if not exists private.course_reviews (
 
   -- 표본 중복 방지용 가명키. 대상(subject) 범위로만 안정적이라 과목을 넘나드는
   -- 추적에 쓸 수 없다. 탈퇴로 member_id가 null이 돼도 distinct 집계가 유지된다.
-  -- ⚠️ 운영 승격 전 md5 → 서버 비밀키 HMAC으로 교체할 것(학번 HMAC과 동일 원칙).
-  reviewer_key  text    not null,
+  -- 계약(REQUIRED-5): 서버가 subject별 도메인 분리 HMAC-SHA256으로 계산한 hex64.
+  -- 클라이언트가 만들거나 입력할 수 없고, 일반 RPC·로그·오류 응답에 노출하지 않는다.
+  reviewer_key          text     not null check (reviewer_key ~ '^[0-9a-f]{64}$'),
+  reviewer_key_version  smallint not null default 1 check (reviewer_key_version >= 1),
+
+  -- ★ 기여(contribution) 식별자 — 최초본과 모든 정정본이 **같은 값**을 공유한다.
+  --   보상·도움됨·철회·신고는 리뷰 행 id가 아니라 여기에 귀속시킨다.
+  --   이게 없으면: 구버전 100에 +20 지급 → 정정본 101 공개 → 101을 철회할 때
+  --   ref_id=101로 지급행을 찾아 **회수가 0건**이 된다(GPT가 잡은 실제 구멍).
+  contribution_id uuid not null default gen_random_uuid(),
 
   semester      text    not null check (semester ~ '^[0-9]{4}-[12]$'),  -- 내부 전용, 공개 금지
 
@@ -127,7 +135,10 @@ create table if not exists private.exam_tips (
   id           bigserial primary key,
   subject_id   bigint not null references private.course_review_subjects (id) on delete restrict,
   member_id    uuid   references private.members (id) on delete set null,
-  reviewer_key text   not null,
+  author_withdrawn_at timestamptz,
+  reviewer_key text   not null check (reviewer_key ~ '^[0-9a-f]{64}$'),
+  reviewer_key_version smallint not null default 1 check (reviewer_key_version >= 1),
+  contribution_id uuid not null default gen_random_uuid(),
   semester     text   not null check (semester ~ '^[0-9]{4}-[12]$'),
   status       text   not null default 'draft' check (status in (
                  'draft','submitted','published','withdrawn_by_author','hidden_by_moderation','purged')),
@@ -173,6 +184,9 @@ create table if not exists private.ticket_ledger (
                'helpful_bonus','unlock_subject','clawback')),
   ref_type   text,
   ref_id     bigint,
+  -- 강의평 보상은 리뷰 행이 아니라 기여(contribution)에 귀속시킨다 — 정정본이
+  -- 생겨도 지급·회수가 같은 대상을 가리키게 하기 위함.
+  contribution_id uuid,
   -- 역분개 대상 (REQUIRED / Q4): 어떤 지급을 되돌린 것인지 1:1로 남긴다.
   reverses_entry_id bigint references private.ticket_ledger (id),
   idempotency_key text not null unique check (char_length(idempotency_key) between 8 and 200),
@@ -199,16 +213,15 @@ begin
   if tg_op = 'DELETE' then
     raise exception 'ticket_ledger is append-only (회수는 반대 거래를 추가할 것)';
   end if;
+  -- member_id를 **제외한 모든 컬럼**이 동일할 때만 통과시킨다.
+  -- 컬럼을 하나씩 나열하면 빠뜨린 컬럼(ref_type·ref_id처럼)이 생기고,
+  -- "member_id를 null로 만들면서 ref_id도 바꾸는" UPDATE가 통과한다(GPT 지적).
+  -- to_jsonb 비교로 두면 나중에 컬럼이 추가돼도 자동으로 보호된다.
   if old.member_id is not null and new.member_id is null
-     and new.id = old.id
-     and new.delta = old.delta
-     and new.reason = old.reason
-     and new.idempotency_key = old.idempotency_key
-     and new.reverses_entry_id is not distinct from old.reverses_entry_id
-     and new.created_at = old.created_at then
+     and (to_jsonb(new) - 'member_id') = (to_jsonb(old) - 'member_id') then
     return new;   -- 탈퇴 가명화만 통과
   end if;
-  raise exception 'ticket_ledger is append-only (금액·이유·키 수정 불가)';
+  raise exception 'ticket_ledger is append-only (금액·이유·키·참조 수정 불가)';
 end $$;
 revoke execute on function private.ticket_ledger_append_only() from public, anon, authenticated;
 
@@ -216,6 +229,52 @@ drop trigger if exists ticket_ledger_no_mutate on private.ticket_ledger;
 create trigger ticket_ledger_no_mutate
   before update or delete on private.ticket_ledger
   for each row execute function private.ticket_ledger_append_only();
+
+-- 역분개 정합성 (REQUIRED). UNIQUE는 "중복 역분개"만 막는다. 아래는 DB가
+-- 아직 못 막던 것들 — 남의 지급 회수, 금액 불일치, 소비행/회수행의 재역분개.
+create or replace function private.validate_ticket_clawback()
+returns trigger language plpgsql set search_path='' as $$
+declare o private.ticket_ledger%rowtype;
+begin
+  if new.reason <> 'clawback' then return new; end if;
+  select * into o from private.ticket_ledger l where l.id = new.reverses_entry_id;
+  if o.id is null            then raise exception 'reversal target not found'; end if;
+  if o.delta <= 0            then raise exception 'can only reverse a positive entry'; end if;
+  if o.reason = 'clawback'   then raise exception 'cannot reverse a clawback'; end if;
+  if o.member_id is distinct from new.member_id then
+    raise exception 'reversal must belong to the same member';
+  end if;
+  if new.delta <> -o.delta   then raise exception 'reversal must exactly negate the original'; end if;
+  return new;
+end $$;
+revoke execute on function private.validate_ticket_clawback() from public, anon, authenticated;
+
+drop trigger if exists ticket_ledger_validate_clawback on private.ticket_ledger;
+create trigger ticket_ledger_validate_clawback
+  before insert on private.ticket_ledger
+  for each row execute function private.validate_ticket_clawback();
+
+-- 탈퇴로 member_id가 비워질 때 author_withdrawn_at을 함께 남긴다.
+-- "member_id는 null인데 탈퇴 시각은 모름" 상태를 만들지 않기 위함(REQUIRED-5).
+create or replace function private.mark_author_withdrawn()
+returns trigger language plpgsql set search_path='' as $$
+begin
+  if old.member_id is not null and new.member_id is null and new.author_withdrawn_at is null then
+    new.author_withdrawn_at := clock_timestamp();
+  end if;
+  return new;
+end $$;
+revoke execute on function private.mark_author_withdrawn() from public, anon, authenticated;
+
+drop trigger if exists course_reviews_mark_withdrawn on private.course_reviews;
+create trigger course_reviews_mark_withdrawn
+  before update on private.course_reviews
+  for each row execute function private.mark_author_withdrawn();
+
+drop trigger if exists exam_tips_mark_withdrawn on private.exam_tips;
+create trigger exam_tips_mark_withdrawn
+  before update on private.exam_tips
+  for each row execute function private.mark_author_withdrawn();
 
 -- ------------------------------------------------------------
 -- 5. 잠금해제 기록
@@ -227,6 +286,12 @@ create table if not exists private.review_unlocks (
   member_id        uuid   not null references private.members (id) on delete cascade,
   subject_id       bigint not null references private.course_review_subjects (id) on delete cascade,
   unlock_generation integer not null default 1 check (unlock_generation >= 1),
+  -- ★ 원장 키에 회원 UUID를 넣지 않기 위한 무작위 이벤트 id.
+  --   예전 키는 'unlock:<회원UUID>:<subject>:<gen>' 이었는데, 탈퇴로 member_id를
+  --   null로 바꿔도 **키 문자열에 원래 Auth UUID가 그대로 남아 가명화가 완성되지
+  --   않았다**(GPT 지적). 이제 원장에는 event_id만 남고, 회원과의 연결은 이 표에만
+  --   있으므로 탈퇴 시 이 표가 cascade 삭제되면 복원이 불가능해진다.
+  unlock_event_id  uuid   not null default gen_random_uuid(),
   unlocked_at      timestamptz not null default now(),
   valid_until      timestamptz not null,
   primary key (member_id, subject_id)
@@ -291,12 +356,17 @@ begin
          where r.subject_id = p_subject_id and r.status = 'published'
          order by r.reviewer_key, r.published_at desc
       )
+      -- ★ 희소 셀 억제 (REQUIRED-4): 작성자가 10명이어도 "보통 9 / 깐깐함 1" 같은
+      --   분포는 그 1명의 응답을 사실상 노출한다. 항목 안에 3명 미만인 셀이
+      --   하나라도 있으면 **그 항목 전체를 비공개**로 한다. 한 셀만 가리면
+      --   총합으로 역산되기 때문(complementary suppression).
       select jsonb_build_object(
         'n_reviews', v_reviews, 'n_reviewers', v_reviewers, 'disclosure', 'full',
-        'assignment',   (select jsonb_object_agg(a, c) from (select assignment a, count(*) c from latest where assignment is not null group by 1) t),
-        'team_project', (select jsonb_object_agg(a, c) from (select team_project a, count(*) c from latest where team_project is not null group by 1) t),
-        'grading',      (select jsonb_object_agg(a, c) from (select grading a, count(*) c from latest where grading is not null group by 1) t),
-        'attendance',   (select jsonb_object_agg(a, c) from (select attendance a, count(*) c from latest where attendance is not null group by 1) t))
+        'min_cell', 3,
+        'assignment',   (select case when min(c) >= 3 then jsonb_object_agg(a, c) end from (select assignment a, count(*) c from latest where assignment is not null group by 1) t),
+        'team_project', (select case when min(c) >= 3 then jsonb_object_agg(a, c) end from (select team_project a, count(*) c from latest where team_project is not null group by 1) t),
+        'grading',      (select case when min(c) >= 3 then jsonb_object_agg(a, c) end from (select grading a, count(*) c from latest where grading is not null group by 1) t),
+        'attendance',   (select case when min(c) >= 3 then jsonb_object_agg(a, c) end from (select attendance a, count(*) c from latest where attendance is not null group by 1) t))
     );
   end if;
 
@@ -339,6 +409,7 @@ declare
   v_until    timestamptz;
   v_gen      integer;
   v_exists   boolean;
+  v_event    uuid;
 begin
   if not authz.is_active_member() then raise exception 'not allowed'; end if;
 
@@ -364,15 +435,18 @@ begin
   end if;
 
   v_gen := coalesce(v_gen, 0) + 1;
+  v_event := gen_random_uuid();
 
+  -- 원장 키에는 회원 UUID를 넣지 않는다 (탈퇴 후에도 남기 때문)
   insert into private.ticket_ledger (member_id, delta, reason, ref_type, ref_id, idempotency_key)
   values (auth.uid(), -5, 'unlock_subject', 'subject', p_subject_id,
-          'unlock:' || auth.uid()::text || ':' || p_subject_id::text || ':' || v_gen::text);
+          'unlock:' || v_event::text);
 
-  insert into private.review_unlocks (member_id, subject_id, unlock_generation, valid_until)
-  values (auth.uid(), p_subject_id, v_gen, now() + interval '6 months')
+  insert into private.review_unlocks (member_id, subject_id, unlock_generation, unlock_event_id, valid_until)
+  values (auth.uid(), p_subject_id, v_gen, v_event, now() + interval '6 months')
   on conflict (member_id, subject_id) do update
     set unlock_generation = excluded.unlock_generation,
+        unlock_event_id = excluded.unlock_event_id,
         unlocked_at = now(), valid_until = excluded.valid_until;
 
   return jsonb_build_object('status','unlocked','valid_until', now() + interval '6 months');
@@ -390,7 +464,7 @@ grant  execute on function public.unlock_course_reviews(bigint) to authenticated
 -- ------------------------------------------------------------
 create or replace function public.withdraw_course_review(p_review_id bigint)
 returns void language plpgsql security definer set search_path='' as $$
-declare v_hit boolean;
+declare v_contrib uuid;
 begin
   if auth.uid() is null then raise exception 'not allowed'; end if;
 
@@ -403,19 +477,20 @@ begin
    where r.id = p_review_id
      and r.member_id = auth.uid()
      and r.status in ('draft','submitted','published')
-  returning true into v_hit;
+  returning r.contribution_id into v_contrib;
 
-  if v_hit is null then return; end if;  -- 없거나 타인 것이면 no-op (존재 정보 비노출)
+  if v_contrib is null then return; end if;  -- 없거나 타인 것이면 no-op (존재 정보 비노출)
 
-  -- 이 수강 건으로 지급된 원장 행들을 각각 역분개
+  -- ★ 지급행은 **기여(contribution) 단위**로 찾는다. 리뷰 행 id로 찾으면
+  --   "구버전에 지급 → 정정본을 철회" 시 회수가 0건이 된다(GPT가 잡은 구멍).
   perform 1 from private.members m where m.id = auth.uid() for update;
   insert into private.ticket_ledger (member_id, delta, reason, ref_type, ref_id,
-                                     reverses_entry_id, idempotency_key)
+                                     contribution_id, reverses_entry_id, idempotency_key)
   select l.member_id, -l.delta, 'clawback', l.ref_type, l.ref_id,
-         l.id, 'reverse:ledger:' || l.id::text
+         l.contribution_id, l.id, 'reverse:ledger:' || l.id::text
     from private.ticket_ledger l
    where l.member_id = auth.uid()
-     and l.ref_type = 'course_review' and l.ref_id = p_review_id
+     and l.contribution_id = v_contrib
      and l.delta > 0
      and not exists (select 1 from private.ticket_ledger x where x.reverses_entry_id = l.id);
 end $$;

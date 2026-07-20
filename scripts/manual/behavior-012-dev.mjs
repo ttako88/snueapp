@@ -204,6 +204,49 @@ async function main() {
     const again = (await client.query(
       `select public.resolve_auto_hidden_case(${kase.id}, 'restore', '중복 호출')`)).rows[0].resolve_auto_hidden_case;
     rec("이미 처리된 사건은 멱등 수렴", again.status === "already_resolved", again.status);
+
+    // ── (N4) 자동숨김 이력이 남아 있어야 한다 ──
+    const { rows: [hist] } = await client.query(
+      `select auto_hidden_at is not null a, auto_hide_kind k,
+              auto_hide_reviewed_at is not null r, auto_hide_decision d
+         from private.moderation_cases where id=${kase.id}`);
+    rec("복구해도 자동숨김 이력 보존 + 검토결과 기록",
+      hist.a === true && hist.k === "emergency" && hist.r === true && hist.d === "restored",
+      `kind=${hist.k} decision=${hist.d}`);
+
+    // ── (N6) get_case가 자동숨김 정보를 돌려주는가 ──
+    const { rows: [gc] } = await client.query(`select * from public.get_case(${kase.id})`);
+    rec("get_case에 자동숨김 정보 노출(신고자 ID는 미노출)",
+      gc.auto_hidden === true && gc.auto_hide_kind === "emergency" &&
+      gc.auto_hide_decision === "restored" && gc.review_required === false &&
+      !JSON.stringify(gc.reports).includes("reporter"),
+      `auto_hidden=${gc.auto_hidden} review_required=${gc.review_required}`);
+
+    // ── (N2) 일반 사건에는 적용되지 않아야 한다 ──
+    await actAs(U(1));
+    const { rows: [pn] } = await client.query(
+      `insert into public.posts (board_id,title,body,author_nickname) values (${b.id},'일반사건','본문','회원1') returning id`);
+    await actAs(U(3));
+    await client.query(`select public.submit_report('post', ${pn.id}, 'off_topic', null)`);
+    const { rows: [nk] } = await client.query(
+      `select id from private.moderation_cases where target_type='post' and target_id=${pn.id}`);
+    await actAs(U(2));
+    const na = (await client.query(
+      `select public.resolve_auto_hidden_case(${nk.id}, 'restore', '일반 사건에 호출')`)).rows[0].resolve_auto_hidden_case;
+    rec("자동숨김이 아닌 일반 사건은 not_applicable", na.status === "not_applicable", na.status);
+
+    // ── (N3) 자기 사건 처리 금지 ──
+    // 운영자(U2)가 쓴 글이 자동숨김되면, 그 사건을 본인이 처리할 수 없어야 한다
+    await actAs(U(2));
+    const { rows: [pOwn] } = await client.query(
+      `insert into public.posts (board_id,title,body,author_nickname) values (${b.id},'운영자글','본문','회원2') returning id`);
+    await actAs(U(3));
+    await client.query(`select public.submit_report('post', ${pOwn.id}, 'obscene_illegal', '불법 내용 상세')`);
+    const { rows: [ok2] } = await client.query(
+      `select id from private.moderation_cases where target_type='post' and target_id=${pOwn.id}`);
+    await actAs(U(2));
+    await mustFail("자기 사건은 본인이 처리 불가",
+      `select public.resolve_auto_hidden_case(${ok2.id}, 'restore', '내 글이라 복구')`);
   } finally {
     await client.query("rollback");
     await client.end();

@@ -186,9 +186,14 @@ grant  execute on function public.list_my_bookmarks(int, timestamptz, bigint) to
 --    이렇게 하면 어떤 경로로 신고가 들어와도 정책이 동일하게 적용된다.
 -- (REQUIRED-012-6) 운영자가 "왜 숨겨졌는지"를 사건 화면에서 볼 수 있어야 한다.
 -- audit_logs만 남기면 moderator용 get_case에서 원인을 못 본다.
+-- (REQUIRED-012-N4) 복구해도 "언제·왜 숨겨졌고 누가 어떻게 판단했는지"는 남겨야 한다.
+-- 검토 결과는 지우는 게 아니라 덧붙인다. 사건을 dismissed로 닫으면 그 사건에는
+-- 새 신고가 붙지 않으므로(새 신고는 새 open case), 이력을 지워야 재숨김이 막히는 게 아니다.
 alter table private.moderation_cases
   add column if not exists auto_hidden_at timestamptz,
-  add column if not exists auto_hide_kind text check (auto_hide_kind in ('emergency','threshold'));
+  add column if not exists auto_hide_kind text check (auto_hide_kind in ('emergency','threshold')),
+  add column if not exists auto_hide_reviewed_at timestamptz,
+  add column if not exists auto_hide_decision text check (auto_hide_decision in ('restored','kept_hidden'));
 
 create or replace function private.apply_report_auto_hide()
 returns trigger language plpgsql security definer set search_path='' as $$
@@ -200,10 +205,17 @@ declare
   v_hidden    boolean := false;
   v_post      bigint;
 begin
-  select * into v_case from private.moderation_cases c where c.id = new.case_id;
+  -- (REQUIRED-012-N1) 잠그지 않고 세면, 세 명이 거의 동시에 신고할 때 각 트랜잭션이
+  -- 서로의 미커밋 신고를 못 봐서 **최종 3건인데도 아무도 숨기지 않는** 일이 생긴다.
+  -- 같은 신고자의 긴급 신고가 동시에 실행되면 일일 상한도 함께 통과한다.
+  -- 잠금 순서를 사건 → 신고자로 고정한다(교착 방지).
+  select * into v_case from private.moderation_cases c where c.id = new.case_id for update;
   if v_case.id is null then return new; end if;
 
   v_emergency := new.reason_code in ('privacy','obscene_illegal');
+  if v_emergency and new.reporter_id is not null then
+    perform 1 from private.members m where m.id = new.reporter_id for update;
+  end if;
 
   -- (REQUIRED-012-3) 긴급 신고 악용 방지.
   --  ① 긴급 사유는 상세 설명이 있어야 한다 — 근거 없이 즉시 숨기는 버튼이 되면 안 된다.
@@ -282,20 +294,40 @@ create or replace function public.resolve_auto_hidden_case(
   p_case_id bigint, p_decision text, p_reason text)
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare
-  v_role text;
-  v_case private.moderation_cases%rowtype;
-  v_post bigint;
+  v_role   text;
+  v_case   private.moderation_cases%rowtype;
+  v_post   bigint;
+  v_author record;
 begin
-  select m.role into v_role from private.members m
-   where m.id = auth.uid() and m.verification_status = 'verified' and m.sanction = 'none';
-  if v_role is null or v_role not in ('moderator','operator','owner') then
-    raise exception 'not allowed';
-  end if;
+  -- (REQUIRED-012-N3) 기존 §6 권한 경계를 그대로 재사용한다.
+  v_role := private.actor_role_check('moderator');
   if p_decision not in ('restore','keep_hidden') then raise exception 'invalid decision'; end if;
+  -- (REQUIRED-012-N5) 사유도 다른 관리 함수와 같은 기준
   if p_reason is null or btrim(p_reason) = '' then raise exception 'reason required'; end if;
+  if char_length(btrim(p_reason)) > 500 then raise exception 'reason too long'; end if;
+  if p_reason ~ E'[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]' then raise exception 'reason has control characters'; end if;
 
   select * into v_case from private.moderation_cases c where c.id = p_case_id for update;
   if v_case.id is null then raise exception 'not found'; end if;
+
+  -- (REQUIRED-012-N2) 자동숨김 사건 전용이다. 일반 사건에 호출해 종결하거나
+  -- 다른 경로로 숨겨진 콘텐츠를 복구하는 데 쓰이면 안 된다.
+  if v_case.auto_hidden_at is null or v_case.auto_hide_kind is null then
+    return jsonb_build_object('status','not_applicable');
+  end if;
+
+  -- (REQUIRED-012-N3) 자기 사건 처리 금지 + 대상 역할 상한.
+  -- 탈퇴한 작성자(연결 없음)는 콘텐츠 판정만 허용한다.
+  select * into v_author from private.content_author(v_case.target_type, v_case.target_id);
+  if v_author.member_id is not null then
+    if v_author.member_id = auth.uid() then
+      raise exception 'cannot resolve your own case';
+    end if;
+    if not private.target_within_limit(v_role, v_author.member_role) then
+      raise exception 'target role exceeds your limit';
+    end if;
+  end if;
+
   if v_case.status <> 'open' then
     return jsonb_build_object('status','already_resolved','case_status',v_case.status);  -- 멱등
   end if;
@@ -312,14 +344,16 @@ begin
         update public.posts p set comment_count = p.comment_count + 1 where p.id = v_post;
       end if;
     end if;
-    -- 재숨김 방지: 긴급 플래그와 자동숨김 흔적을 함께 내린다
+    -- (N4) 자동숨김 이력은 **지우지 않는다**. 검토 결과만 덧붙인다.
     update private.moderation_cases c
        set status = 'dismissed', closed_at = clock_timestamp(), closed_by = auth.uid(),
-           emergency = false, auto_hidden_at = null, auto_hide_kind = null
+           emergency = false,
+           auto_hide_reviewed_at = clock_timestamp(), auto_hide_decision = 'restored'
      where c.id = p_case_id;
   else
     update private.moderation_cases c
-       set status = 'resolved', closed_at = clock_timestamp(), closed_by = auth.uid()
+       set status = 'resolved', closed_at = clock_timestamp(), closed_by = auth.uid(),
+           auto_hide_reviewed_at = clock_timestamp(), auto_hide_decision = 'kept_hidden'
      where c.id = p_case_id;
   end if;
 
@@ -334,6 +368,41 @@ end $$;
 revoke execute on function public.resolve_auto_hidden_case(bigint, text, text)
   from public, anon, authenticated;
 grant  execute on function public.resolve_auto_hidden_case(bigint, text, text) to authenticated;
+
+-- ------------------------------------------------------------
+-- 4-2. get_case에 자동숨김 정보 노출 (REQUIRED-012-N6)
+--   audit_logs만 남기면 moderator 화면에서 "왜 숨겨졌는지"를 볼 수 없다.
+--   반환 컬럼이 늘어나므로 create or replace로는 안 되고 drop 후 재생성해야 한다
+--   (012에서 003 트리거를 교체한 것과 같은 "증분이 최종 상태를 만든다" 방식).
+--   ★ 신고자 ID는 여전히 반환하지 않는다.
+-- ------------------------------------------------------------
+drop function if exists public.get_case(bigint);
+create or replace function public.get_case(p_case_id bigint)
+returns table (id bigint, target_type text, target_id bigint, status text, report_count int,
+               emergency boolean, opened_at timestamptz,
+               reports jsonb, actions jsonb, snapshot text,
+               auto_hidden boolean, auto_hidden_at timestamptz, auto_hide_kind text,
+               auto_hide_reviewed_at timestamptz, auto_hide_decision text,
+               review_required boolean)
+language plpgsql stable security definer set search_path = '' as $$
+begin
+  perform private.actor_role_check('moderator');
+  return query select c.id, c.target_type, c.target_id, c.status, c.report_count, c.emergency, c.opened_at,
+    (select coalesce(jsonb_agg(jsonb_build_object(
+       'reason_code', r.reason_code, 'detail', r.detail, 'created_at', r.created_at)), '[]'::jsonb)
+     from private.reports r where r.case_id = c.id),                     -- 신고자 미노출
+    (select coalesce(jsonb_agg(jsonb_build_object(
+       'action', a.action, 'created_at', a.created_at, 'reason', a.reason)), '[]'::jsonb)
+     from private.moderation_actions a where a.case_id = c.id),          -- target_member_id 제외
+    (select s.content from private.case_snapshots s where s.case_id = c.id
+     order by s.captured_at desc limit 1),
+    (c.auto_hidden_at is not null),
+    c.auto_hidden_at, c.auto_hide_kind, c.auto_hide_reviewed_at, c.auto_hide_decision,
+    (c.status = 'open' and c.auto_hidden_at is not null)
+  from private.moderation_cases c where c.id = p_case_id;
+end $$;
+revoke execute on function public.get_case(bigint) from public, anon, authenticated;
+grant execute on function public.get_case(bigint) to authenticated;
 
 -- ------------------------------------------------------------
 -- 5. 기존 카운터 드리프트 1회 재계산 (REQUIRED-012-5)

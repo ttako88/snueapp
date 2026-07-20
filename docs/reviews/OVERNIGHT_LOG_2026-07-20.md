@@ -52,4 +52,12 @@
   3. **007 — 소프트 삭제 RLS 구조결함(가장 심각: 사용자가 자기 글 삭제 불가)**. posts_select의 `deleted_at is null`과 RLS UPDATE 가시성 상호작용. definer RPC(soft_delete_post/comment)로 전환. **GATE3 §5.2 문서를 v1.4로 조정 필요(soft delete=RPC 경로)** — 기상 후 문서 반영 예정.
 - 커밋: 9bee90c(M/R/F/A+006), 1185d4d(V/D/P+003), e39bdf9(W/G/X+007).
 - **다음**: GPT 검수(3건 수정 방향+단계 B 진입 여부) → 승인 시 단계 B(산출물 동결·SHA·결과표 보고) → 운영 적용은 B-10 별도 승인.
-- ⚠️ **GATE3_DESIGN.md v1.4 반영 대기**: §4.1 학번 8자리, §5.2 soft delete를 definer RPC로. (dev draft/마이그레이션엔 이미 반영, 설계문서 동기화만 남음)
+- ✅ **GATE3_DESIGN.md v1.4 반영 완료**: §4.1 학번 8자리, §5.2 soft delete definer RPC.
+- ✅ **파일명 정규화**(003b→004_admin_batch 등 001~008) + comment_count 개선(hide/restore 반영) + GATE4A_LEDGER(파일명 대응·75건 분류·clean replay 계획).
+- ⏸️ **clean replay 미완**: GPT (A)안 무인 승인했으나, dev 재기반 `drop schema cascade`를 하네스 안전 classifier가 파괴적 작업으로 차단. 모달 Cancel로 중단, dev는 59 PASS 상태 보존. **사용자 기상/입회 후 재개** (기록: GATE4A_LEDGER §5).
+
+## 최종 상태 (2026-07-21 새벽 기준, 오푸스)
+- **Gate 3 = v1.4 확정 / Gate 4a 단계 A = DB/SQL 산출물 dev 검증 통과(59 PASS)**. "Gate 4a 전체 완료" 아님(서버 Route/잡 DEFERRED, clean replay·SHA 동결 대기).
+- 커밋 체인: dacd7a8(v1.3)→…→9bee90c/1185d4d/e39bdf9(테스트+결함3건)→e166d9a(파일명)→a17ebb1(v1.4+ledger)→9d3436f(comment_count)→4395446(clean replay 기록).
+- **기상 후 할 일 순서**: ①clean replay(사용자 입회 하 dev 재기반→001~008 순차→fixture→60+테스트→사후검증→SHA 동결) ②단계 B 산출물 동결 ③(별도 B-10 승인 후) 운영 적용 ④maintenance Route·서버 잡 실코드(Gate 4a 서버부) ⑤OAuth(Gate 4b).
+- **밤사이 핵심 성과**: 문서 검수 3라운드가 놓친 **실런타임/구조 결함 3건을 SQL 실측으로 발견·수정**(특히 소프트 삭제 불가 = 치명결함). "리허설이 바로 그 목적대로 작동"(GPT 평).

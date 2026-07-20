@@ -10,6 +10,10 @@ import {
   SEMESTER_LABELS,
   DEFAULT_SEMESTER,
   colorFor,
+  courseId,
+  conflicts,
+  loadSemesterCourses,
+  saveSemesterCourses,
 } from "../../lib/timetable";
 import {
   searchCourses,
@@ -42,6 +46,30 @@ export default function CourseSearchPage() {
   const [dept, setDept] = useState("");
   const [day, setDay] = useState("");
   const [openKey, setOpenKey] = useState(null); // 펼친 과목 카드
+  const [notice, setNotice] = useState("");     // 담기 결과 안내
+
+  // 검색 결과에서 바로 시간표에 담는다. 보고 있는 학기에 그대로 들어간다.
+  // (검색만 되고 담을 수 없으면 결국 강의 탭으로 다시 가서 또 찾아야 한다)
+  function addToTimetable(section) {
+    const cur = loadSemesterCourses(semester) || [];
+    const id = courseId(section);
+
+    if (cur.some((c) => courseId(c) === id)) {
+      setNotice("이미 시간표에 있는 강의예요.");
+    } else {
+      const clash = cur.find((c) => conflicts(c, section));
+      if (clash) {
+        // 막지 않고 알린다 — 원본 시간표 자체에 실제 중복이 있는 경우가 있어서
+        // (구학번 보강개설 등) 사용자가 판단해야 한다.
+        saveSemesterCourses(semester, [...cur, section]);
+        setNotice(`담았어요. 다만 '${clash.name}'과 시간이 겹쳐요.`);
+      } else {
+        saveSemesterCourses(semester, [...cur, section]);
+        setNotice(`${section.name} 담았어요 → 강의 탭에서 확인`);
+      }
+    }
+    setTimeout(() => setNotice(""), 2600);
+  }
 
   const groups = useMemo(
     () => groupResults(searchCourses(ALL_COURSES, { q, semester, type, grade, dept, day })),
@@ -126,6 +154,12 @@ export default function CourseSearchPage() {
         )}
       </div>
 
+      {notice && (
+        <p className="sticky top-2 z-10 rounded-xl bg-[#0095da] px-3 py-2 text-center text-xs font-bold text-white shadow">
+          {notice}
+        </p>
+      )}
+
       {/* 결과 목록 */}
       {groups.length === 0 ? (
         <div className="rounded-2xl bg-white p-8 text-center shadow-sm">
@@ -167,8 +201,9 @@ export default function CourseSearchPage() {
                     <ul className="flex flex-col gap-2">
                       {g.sections.map((s, i) => (
                         <li key={i} className="flex items-start gap-2 text-xs">
+                          {/* 분반 표기가 없는 강의도 있다 — 그때 "분반"만 남지 않게 */}
                           <span className="mt-0.5 shrink-0 rounded bg-white px-1.5 py-0.5 font-bold text-[#0c4470]/60 shadow-sm">
-                            {s.section}분반
+                            {s.section ? `${s.section}분반` : "단일"}
                           </span>
                           <span className="min-w-0 flex-1 text-[#0c4470]/70">
                             <span className="block">
@@ -177,6 +212,12 @@ export default function CourseSearchPage() {
                             <span className="block text-[#0c4470]/45">
                               {cleanProfessors(s.professor).join(", ") || "교수 미정"} · {s.room} · {s.dept}
                             </span>
+                            <button
+                              onClick={() => addToTimetable(s)}
+                              className="mt-1 rounded-lg bg-[#eaf6fd] px-2 py-1 text-[11px] font-bold text-[#0095da] active:bg-[#d5ecfa]"
+                            >
+                              + 시간표에 담기
+                            </button>
                             {s.groupLabel && (
                               <span className="mt-0.5 block text-[#0095da]">{s.groupLabel}</span>
                             )}

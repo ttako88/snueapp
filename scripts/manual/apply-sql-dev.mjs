@@ -72,7 +72,10 @@ async function main() {
            (select count(*) from auth.users) as auth_users,
            (select count(*) from storage.objects) as storage_objs,
            (select count(*) from pg_tables where schemaname='public') as pub_tbl,
-           (select count(*) from pg_namespace where nspname in ('private','authz')) as app_ns
+           (select count(*) from pg_namespace where nspname in ('private','authz')) as app_ns,
+           (select md5(coalesce(string_agg(id::text, ',' order by id), '')) from auth.users) as auth_fp,
+           (select md5(coalesce(string_agg(bucket_id||'/'||name, ',' order by bucket_id, name), '')) from storage.objects) as storage_fp,
+           (select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='rls_auto_enable') as rls_ae
   `);
   console.log("[preflight] " + JSON.stringify(pre.rows[0]));
 
@@ -94,8 +97,16 @@ async function main() {
     }
     const t0 = Date.now();
     try {
-      await client.query(sql);
+      const res = await client.query(sql);
       console.log(`[ok] ${f}  (${Date.now() - t0}ms)`);
+      // SELECT 등 행을 돌려주는 문이면 결과를 출력 (검증 쿼리용). DDL은 행이 없어 조용.
+      // 다중 문 배치는 결과 배열 — 모든 결과셋의 행을 출력(롤백 직전 요약도 보이게).
+      const results = Array.isArray(res) ? res : [res];
+      for (const r of results) {
+        if (r && r.rows && r.rows.length) {
+          for (const row of r.rows) console.log("  " + JSON.stringify(row));
+        }
+      }
     } catch (e) {
       console.error(`[FAIL] ${f}  (${Date.now() - t0}ms)`);
       console.error("  " + scrub(e.message, url));

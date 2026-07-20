@@ -72,4 +72,4 @@ commit;
 
 -- 확인
 select 'fixtures:'||count(*)||' verified:'||count(*) filter (where verification_status='verified') as summary
-from private.members where id like '00000000-0000-0000-0000-0000000000%';
+from private.members where id::text like '00000000-0000-0000-0000-0000000000%';

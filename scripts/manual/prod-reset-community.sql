@@ -162,10 +162,11 @@ insert into _reset_allowlist (kind, signature, name, generation) values
   ('app_function','private.run_stale_review_notifications(integer)','run_stale_review_notifications','new'),
   ('app_function','private.target_within_limit(text, text)','target_within_limit','new'),
   ('app_function','private.validate_nickname(text)','validate_nickname','new'),
-  -- dev 테스트 스캐폴딩 함수 3종 (정확 시그니처 — 운영에선 0개가 정상)
+  -- dev 테스트 스캐폴딩 함수 4종 (정확 시그니처 — 운영에선 0개가 정상)
   ('app_function','private._assert(text, text, text, boolean, text)','_assert','scaffold'),
   ('app_function','private._assert_ok(text, text, text)','_assert_ok','scaffold'),
-  ('app_function','private._assert_raises(text, text, text)','_assert_raises','scaffold');
+  ('app_function','private._assert_raises(text, text, text)','_assert_raises','scaffold'),
+  ('app_function','authz._log(text, text, boolean, text)','_log','scaffold');
 
 -- ── [2] 사전검사 전부 — 어떤 DROP보다 먼저 (A-R2). 하나라도 실패 = 전체 롤백 ──
 do $$
@@ -186,7 +187,7 @@ begin
 
   if exists (select 1 from pg_namespace where nspname in ('private','authz')) then
     -- 2-2) 앱 스키마 내부 릴레이션: 테이블은 allowlist 정확명만, 뷰·매뷰·외부테이블 금지
-    select string_agg(n.nspname || '.' || c.relname || '(' || c.relkind || ')', ', ') into bad
+    select string_agg(n.nspname || '.' || c.relname || '(' || c.relkind::text || ')', ', ') into bad
     from pg_class c join pg_namespace n on n.oid = c.relnamespace
     where n.nspname in ('private','authz')
       and c.relkind not in ('S','i','t')
@@ -226,7 +227,7 @@ begin
 
     -- 2-3b) 앱 스키마 내부 타입: 승인 릴레이션의 자동 composite row type + 그 array type만.
     --       enum·domain·range·독립 composite 등은 전부 중단 (조건부 허가 보완①)
-    select string_agg(n.nspname || '.' || t.typname || '(' || t.typtype || ')', ', ') into bad
+    select string_agg(n.nspname || '.' || t.typname || '(' || t.typtype::text || ')', ', ') into bad
     from pg_type t join pg_namespace n on n.oid = t.typnamespace
     where n.nspname in ('private','authz')
       and not (

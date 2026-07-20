@@ -24,11 +24,16 @@ alter table public.posts
 
 -- 고정 상태의 정합성: 고정이면 고정시각·고정자가 있어야 한다.
 -- (pinned_by는 운영자 탈퇴 시 null이 될 수 있으므로 pinned_at만 기준으로 삼는다)
+-- (REQUIRED-011-3) 해제 상태에서는 세 컬럼이 모두 비어야 한다.
+--   예전 CHECK는 pinned_until→pinned_at만 봐서 "pinned_at은 null인데 pinned_by만 남은"
+--   비정상 상태가 가능했다. pinned_by는 운영자 탈퇴 시 SET NULL이 되므로
+--   고정 상태에서 non-null을 강제하지는 않는다.
 do $$
 begin
   if not exists (select 1 from pg_constraint where conname = 'posts_pin_consistent') then
     alter table public.posts add constraint posts_pin_consistent
-      check (pinned_until is null or pinned_at is not null);
+      check (pinned_at is not null
+             or (pinned_until is null and pinned_by is null));
   end if;
 end $$;
 
@@ -67,12 +72,17 @@ begin
   if v_role is null or v_role not in ('operator', 'owner') then
     raise exception 'not allowed';
   end if;
-  if p_reason is null or btrim(p_reason) = '' then
-    raise exception 'reason required';   -- 운영 행위는 사유 없이 남기지 않는다
-  end if;
+  -- 운영 행위는 사유 없이 남기지 않는다 (REQUIRED-011-4: 길이·제어문자 제한)
+  if p_reason is null or btrim(p_reason) = '' then raise exception 'reason required'; end if;
+  if char_length(btrim(p_reason)) > 500 then raise exception 'reason too long'; end if;
+  if p_reason ~ E'[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]' then raise exception 'reason has control characters'; end if;
 
   select * into v_post from public.posts p where p.id = p_post_id;
   if v_post.id is null then raise exception 'not found'; end if;
+
+  -- (REQUIRED-011-1) 게시판 행을 잠근 뒤 세고 갱신한다.
+  -- 안 그러면 두 운영자가 동시에 여섯 번째 공지를 고정할 때 둘 다 count를 통과한다.
+  perform 1 from public.boards b where b.id = v_post.board_id for update;
 
   if p_pin then
     -- 삭제·숨김된 글은 공지로 올리지 않는다
@@ -119,16 +129,26 @@ grant  execute on function public.set_post_notice(bigint, boolean, timestamptz, 
 -- 4. 만료된 고정 정리 (기한부 공지)
 --    009의 서버잡 패턴과 같은 형태 — maintenance Route에서 호출한다.
 -- ------------------------------------------------------------
+-- (REQUIRED-011-2) 만료도 "고정 해제"이므로 감사기록을 남긴다.
+--   문서는 모든 고정·해제를 감사한다고 선언해놓고 이 경로만 조용히 지우고 있었다.
 create or replace function public.job_expire_notices()
 returns integer language plpgsql security definer set search_path='' as $$
 declare v_n integer;
 begin
-  update public.posts
-     set pinned_at = null, pinned_until = null, pinned_by = null
-   where pinned_at is not null
-     and pinned_until is not null
-     and pinned_until <= now();
-  get diagnostics v_n = row_count;
+  with expired as (
+    update public.posts
+       set pinned_at = null, pinned_until = null, pinned_by = null
+     where pinned_at is not null
+       and pinned_until is not null
+       and pinned_until <= now()
+    returning id
+  ), logged as (
+    insert into private.audit_logs (actor_id, action, target_type, target_id, reason)
+    select null, 'board_notice:expire', 'post', e.id::text, '기한 만료로 자동 해제'
+      from expired e
+    returning 1
+  )
+  select count(*)::int into v_n from logged;
   return v_n;
 end $$;
 revoke execute on function public.job_expire_notices() from public, anon, authenticated;

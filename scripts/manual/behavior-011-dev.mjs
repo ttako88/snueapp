@@ -116,6 +116,17 @@ async function main() {
       `set local role authenticated; update public.posts set pinned_at = now() where id = ${pOver}`);
     await client.query("reset role");
 
+    // ── 사유 입력 제한 (REQUIRED-011-4) ──
+    await actAs(OP);
+    await mustFail("사유 500자 초과 거부",
+      `select public.set_post_notice(${pOver}, true, null, repeat('가', 501))`);
+    await mustFail("사유에 제어문자 거부",
+      `select public.set_post_notice(${pOver}, true, null, '사유' || chr(7))`);
+
+    // ── 핀 컬럼 정합성 (REQUIRED-011-3) ──
+    await mustFail("pinned_at 없이 pinned_by만 남는 상태 거부",
+      `update public.posts set pinned_at=null, pinned_until=null, pinned_by='${OP}' where id=${pOver}`);
+
     // ── 해제 + 만료 배치 ──
     await actAs(OP);
     await mustPass("고정 해제", `select public.set_post_notice(${p1}, false, null, '기간 종료')`);
@@ -130,6 +141,10 @@ async function main() {
     const { rows: [job] } = await client.query(`select public.job_expire_notices() n`);
     const { rows: [tmp] } = await client.query(`select pinned_at from public.posts where id = ${pTmp}`);
     rec("만료 배치가 기한 지난 공지를 내림", job.n >= 1 && tmp.pinned_at === null, `해제 ${job.n}건`);
+    const { rows: [exAudit] } = await client.query(
+      `select count(*)::int n from private.audit_logs
+        where action='board_notice:expire' and target_id='${pTmp}'`);
+    rec("만료 해제도 감사로그에 남음", exAudit.n === 1, `${exAudit.n}건`);
   } finally {
     await client.query("rollback");
     await client.end();

@@ -11,7 +11,17 @@ begin;
 create extension if not exists pg_cron;
 
 -- 주: cron.schedule의 소유/실행 역할은 dev에서 실측 확인 (DRAFT_MANIFEST §2)
--- 각 배치 함수는 003 후속분(9절)에서 정의 — idempotent·배치 상한·실패 로그 공통 규칙(§9)
+-- 각 배치 함수는 003b에서 정의 — idempotent·배치 상한·실패 로그 공통 규칙(§9)
+-- r2 (GPT 2차 §7): 재적용 시 중복 job 방지 — 동일 이름 기존 job을 먼저 제거
+do $$
+declare j text;
+begin
+  foreach j in array array['expire_sanctions','purge_soft_deleted_content',
+                           'purge_expired_holds','purge_expired_guest_reads'] loop
+    perform cron.unschedule(j) from cron.job where jobname = j;
+  end loop;
+end $$;
+-- r2: 아래 시각은 "DB cron timezone=UTC" 가정의 KST 환산값 — dev에서 실제 timezone 확인 후 고정 (TODO)
 
 -- 1. sanction 만료 (시간당) — sanction·until 재확인 → none 복귀 → history → 운영 메시지 (한 트랜잭션, 500행)
 select cron.schedule('expire_sanctions', '5 * * * *',

@@ -7,19 +7,8 @@
 begin;
 
 -- ------------------------------------------------------------
--- 0. batch_runs (실행 기록 — §9 공통. 승격 시 002로 이동 검토)
+-- 0. record_batch_run (batch_runs 테이블은 002로 이동 — GPT 2차 §7)
 -- ------------------------------------------------------------
-create table private.batch_runs (
-  job_name        text primary key,
-  last_success_at timestamptz,
-  last_run_at     timestamptz,
-  last_processed  int,
-  fail_streak     int not null default 0,
-  last_error      text
-);
-alter table private.batch_runs enable row level security;
-revoke all on private.batch_runs from anon, authenticated;
-
 create or replace function private.record_batch_run(p_job text, p_ok boolean, p_n int, p_err text)
 returns void language plpgsql security definer set search_path = '' as $$
 declare v_streak int;
@@ -66,11 +55,19 @@ begin
   select * into v_case from private.moderation_cases where id = p_case_id and status = 'open' for update;
   if not found then raise exception 'no open case'; end if;
   select * into v_target from private.content_author(v_case.target_type, v_case.target_id);
-  if v_target.member_id is null then raise exception 'no author';       -- 탈퇴자 콘텐츠는 §13 경로
+  -- r2 (GPT 2차 §6): 탈퇴자 콘텐츠(작성자 연결 없음)도 hide/restore는 가능해야 함.
+  -- 회원 대상 조치(warn·write_restrict)만 작성자 연결 필요 — 없으면 일반 응답으로 거부.
+  if v_target.member_id is null and p_action in ('warn','write_restrict') then
+    raise exception 'not applicable'; end if;
+  if v_target.member_id is not null then
+    if v_target.member_id = auth.uid() then raise exception 'self target'; end if;
+    if not private.target_within_limit(v_actor_role, v_target.member_role) then
+      raise exception 'target beyond limit'; end if;                     -- §6 매트릭스
   end if;
-  if v_target.member_id = auth.uid() then raise exception 'self target'; end if;
-  if not private.target_within_limit(v_actor_role, v_target.member_role) then
-    raise exception 'target beyond limit'; end if;                       -- §6 매트릭스
+  -- r2: moderator의 1일 제한은 명백한 스팸·도배 계열 사건에만 (승인 정책)
+  if p_action = 'write_restrict' and not exists (
+    select 1 from private.reports r where r.case_id = p_case_id and r.reason_code = 'spam') then
+    raise exception 'write_restrict requires spam-type case'; end if;
 
   if p_action = 'hide' then
     if v_case.target_type = 'post' then
@@ -88,6 +85,7 @@ begin
     insert into public.operational_messages (member_id, kind, title, body)
       values (v_target.member_id, 'warning', '커뮤니티 이용 경고', p_reason);
   elsif p_action = 'write_restrict' then                                 -- moderator는 1일 한정 (§6)
+    perform 1 from private.members where id = v_target.member_id for update;  -- r2: 대상 행 잠금
     update private.members set sanction = 'write_restricted', sanction_until = now() + interval '1 day'
       where id = v_target.member_id and sanction = 'none';               -- 더 강한 제재 덮어쓰기 금지
     if not found then raise exception 'stronger sanction active'; end if;
@@ -113,10 +111,12 @@ returns void language plpgsql security definer set search_path = '' as $$
 declare v_actor_role text; v_case private.moderation_cases%rowtype; v_target record;
         v_new text; v_until timestamptz; v_old text;
 begin
-  if p_action in ('suspend_7d','suspend_30d','release') then
+  if p_action in ('suspend_7d','suspend_30d') then
     v_actor_role := private.actor_role_check('operator');
   elsif p_action = 'ban' then
     v_actor_role := private.actor_role_check('owner');
+  elsif p_action = 'release' then
+    v_actor_role := private.actor_role_check('moderator');  -- 최소 진입 — 대칭 검사는 아래에서
   else raise exception 'invalid action'; end if;
   if coalesce(trim(p_reason),'') = '' then raise exception 'reason required'; end if;
   select * into v_case from private.moderation_cases where id = p_case_id for update;
@@ -129,6 +129,12 @@ begin
 
   select sanction into v_old from private.members where id = v_target.member_id for update;
   if p_action = 'release' then
+    -- r2 (GPT 2차 §6): 해제 권한은 부과 권한과 대칭
+    --   banned 해제=owner / 7·30일 정지 해제=operator+ / 1일 제한 해제=moderator+
+    if v_old = 'banned' then perform private.actor_role_check('owner');
+    elsif v_old = 'community_suspended' then perform private.actor_role_check('operator');
+    elsif v_old = 'write_restricted' then perform private.actor_role_check('moderator');
+    else raise exception 'no active sanction'; end if;
     v_new := 'none'; v_until := null;                       -- 만료 전 해제도 권한+감사 (§6)
   else
     v_new := case p_action when 'ban' then 'banned' else 'community_suspended' end;
@@ -229,15 +235,12 @@ declare v_old text;
 begin
   perform private.actor_role_check('owner');
   if p_role not in ('member','moderator','operator','owner') then raise exception 'invalid role'; end if;
-  if p_member_id = auth.uid() and p_role <> 'owner' then
-    if (select count(*) from private.members where role = 'owner') <= 1 then
-      raise exception 'last owner'; end if;                              -- 마지막 owner 강등 금지
-  end if;
+  perform pg_advisory_xact_lock(hashtext('owner_role_change'));          -- r2: 동시 강등으로 owner 0명 방지
   select role into v_old from private.members where id = p_member_id for update;
   if v_old is null then raise exception 'no member'; end if;
   if v_old = 'owner' and p_role <> 'owner'
      and (select count(*) from private.members where role = 'owner') <= 1 then
-    raise exception 'last owner'; end if;
+    raise exception 'last owner'; end if;                                -- 마지막 owner 강등 금지
   update private.members set role = p_role where id = p_member_id;
   insert into private.member_status_history (member_id, changed_field, old_value, new_value, actor_id, reason)
     values (p_member_id, 'role', v_old, p_role, auth.uid(), p_reason);
@@ -254,81 +257,93 @@ create or replace function private.expire_sanctions(p_limit int default 500)
 returns void language plpgsql security definer set search_path = '' as $$
 declare v_n int := 0; r record;
 begin
-  for r in select id, sanction from private.members
-           where sanction in ('write_restricted','community_suspended')
-             and sanction_until is not null and sanction_until < now()
-           limit p_limit for update skip locked
-  loop
-    update private.members set sanction = 'none', sanction_until = null where id = r.id;
-    insert into private.member_status_history (member_id, changed_field, old_value, new_value, reason)
-      values (r.id, 'sanction', r.sanction, 'none', 'expired');
-    insert into public.operational_messages (member_id, kind, title, body)
-      values (r.id, 'sanction_notice', '이용 제한 해제', '이용 제한이 종료되었습니다.');
-    v_n := v_n + 1;
-  end loop;
+  begin                                                   -- r2: 내부 블록
+    for r in select id, sanction from private.members
+             where sanction in ('write_restricted','community_suspended')
+               and sanction_until is not null and sanction_until < now()
+             limit p_limit for update skip locked
+    loop
+      update private.members set sanction = 'none', sanction_until = null where id = r.id;
+      insert into private.member_status_history (member_id, changed_field, old_value, new_value, reason)
+        values (r.id, 'sanction', r.sanction, 'none', 'expired');
+      insert into public.operational_messages (member_id, kind, title, body)
+        values (r.id, 'sanction_notice', '이용 제한 해제', '이용 제한이 종료되었습니다.');
+      v_n := v_n + 1;
+    end loop;
+  exception when others then
+    perform private.record_batch_run('expire_sanctions', false, v_n, sqlerrm);
+    return;
+  end;
   perform private.record_batch_run('expire_sanctions', true, v_n, null);
-exception when others then
-  perform private.record_batch_run('expire_sanctions', false, v_n, sqlerrm);
-  raise;
 end $$;
 
+-- r2 (GPT 판정 Q1): 30일 경과 soft-deleted 글은 살아있는 댓글 포함 하위 트리째 hard delete.
+--   단 글 자체 또는 하위 댓글에 열린 사건이 하나라도 있으면 전체 보존.
 create or replace function private.purge_soft_deleted_content(p_limit int default 500)
 returns void language plpgsql security definer set search_path = '' as $$
-declare v_n int := 0;
+declare v_n int := 0; v_m int;
 begin
-  -- 열린 사건 대상 제외 (§0). comments 먼저(FK cascade와 무관하게 명시), posts 다음
-  with del as (
-    delete from public.comments c
-    where c.deleted_at is not null and c.deleted_at < now() - interval '30 days'
-      and not exists (select 1 from private.moderation_cases mc
-                      where mc.target_type = 'comment' and mc.target_id = c.id and mc.status = 'open')
-      and c.id in (select id from public.comments
-                   where deleted_at is not null and deleted_at < now() - interval '30 days' limit p_limit)
-    returning 1)
-  select count(*) into v_n from del;
-  with del as (
-    delete from public.posts p
-    where p.deleted_at is not null and p.deleted_at < now() - interval '30 days'
-      and not exists (select 1 from private.moderation_cases mc
-                      where mc.target_type = 'post' and mc.target_id = p.id and mc.status = 'open')
-      and not exists (select 1 from public.comments c where c.post_id = p.id and c.deleted_at is null)
-      and p.id in (select id from public.posts
-                   where deleted_at is not null and deleted_at < now() - interval '30 days' limit p_limit)
-    returning 1)
-  select v_n + count(*) into v_n from del;
+  begin                                                   -- r2: 내부 블록 — 실패 시 본문만 롤백
+    -- 1) 삭제 댓글 (부모 글 생존) 정리
+    with del as (
+      delete from public.comments c
+      where c.deleted_at is not null and c.deleted_at < now() - interval '30 days'
+        and not exists (select 1 from private.moderation_cases mc
+                        where mc.target_type = 'comment' and mc.target_id = c.id and mc.status = 'open')
+        and c.id in (select id from public.comments
+                     where deleted_at is not null and deleted_at < now() - interval '30 days' limit p_limit)
+      returning 1)
+    select count(*) into v_n from del;
+    -- 2) 삭제 글: 하위 트리째 (comments는 FK cascade). 글·하위 댓글의 열린 사건이 없을 때만
+    with del as (
+      delete from public.posts p
+      where p.deleted_at is not null and p.deleted_at < now() - interval '30 days'
+        and not exists (select 1 from private.moderation_cases mc
+                        where mc.target_type = 'post' and mc.target_id = p.id and mc.status = 'open')
+        and not exists (select 1 from private.moderation_cases mc
+                        join public.comments c on mc.target_type = 'comment' and mc.target_id = c.id
+                        where c.post_id = p.id and mc.status = 'open')
+        and p.id in (select id from public.posts
+                     where deleted_at is not null and deleted_at < now() - interval '30 days' limit p_limit)
+      returning 1)
+    select count(*) into v_m from del;
+    v_n := v_n + v_m;
+  exception when others then
+    perform private.record_batch_run('purge_soft_deleted_content', false, v_n, sqlerrm);
+    return;                                               -- r2: 실패 기록 유지 (re-raise 안 함)
+  end;
   perform private.record_batch_run('purge_soft_deleted_content', true, v_n, null);
-exception when others then
-  perform private.record_batch_run('purge_soft_deleted_content', false, v_n, sqlerrm);
-  raise;
 end $$;
--- TODO(검수 질문): 삭제 글에 살아있는 댓글이 달린 경우의 처리 — 위 초안은 보류(글 유지).
---   대안: 댓글도 함께 삭제. GATE3에 명시가 없어 GPT 판단 요청.
 
 create or replace function private.purge_expired_holds()
 returns void language plpgsql security definer set search_path = '' as $$
-declare v_n int;
+declare v_n int := 0;
 begin
-  delete from private.enforcement_holds
-    where retention_until is not null and retention_until < now();
-  get diagnostics v_n = row_count;                        -- hard delete (§9 v1.3)
+  begin
+    delete from private.enforcement_holds
+      where retention_until is not null and retention_until < now();
+    get diagnostics v_n = row_count;                      -- hard delete (§9 v1.3)
+  exception when others then
+    perform private.record_batch_run('purge_expired_holds', false, 0, sqlerrm);
+    return;
+  end;
   perform private.record_batch_run('purge_expired_holds', true, v_n, null);
-exception when others then
-  perform private.record_batch_run('purge_expired_holds', false, 0, sqlerrm);
-  raise;
 end $$;
 
 create or replace function private.purge_expired_guest_reads()
 returns void language plpgsql security definer set search_path = '' as $$
-declare v_n int; v_m int;
+declare v_n int := 0; v_m int := 0;
 begin
-  delete from private.guest_reads where expires_at < now();
-  get diagnostics v_n = row_count;
-  delete from private.guest_ip_daily where read_date < (now() at time zone 'Asia/Seoul')::date - 1;
-  get diagnostics v_m = row_count;
+  begin
+    delete from private.guest_reads where expires_at < now();
+    get diagnostics v_n = row_count;
+    delete from private.guest_ip_daily where read_date < (now() at time zone 'Asia/Seoul')::date - 1;
+    get diagnostics v_m = row_count;
+  exception when others then
+    perform private.record_batch_run('purge_expired_guest_reads', false, v_n, sqlerrm);
+    return;
+  end;
   perform private.record_batch_run('purge_expired_guest_reads', true, v_n + v_m, null);
-exception when others then
-  perform private.record_batch_run('purge_expired_guest_reads', false, 0, sqlerrm);
-  raise;
 end $$;
 
 -- ------------------------------------------------------------
@@ -340,7 +355,7 @@ end $$;
 --   (서버) Storage 삭제 ⑨~⑩ → Auth Admin 삭제 ⑪ → 확인 ⑫~⑭
 create or replace function private.prepare_account_deletion(p_member_id uuid)
 returns void language plpgsql security definer set search_path = '' as $$
-declare v_hmac text; v_ver smallint; v_reason text; v_case bigint;
+declare v_hmac text; v_ver smallint; v_reason text; v_case bigint; v_days int;
 begin
   perform 1 from private.members where id = p_member_id for update;      -- finalize 경합 잠금
   if not found then return; end if;                                      -- 멱등
@@ -365,11 +380,14 @@ begin
         then 'open_case_withdrawal'
       end into v_reason;
     if v_reason is not null then
-      -- 보존기간 미확정 시 production hold 생성 금지 (§12-3): retention_until 정책값이
-      -- 확정되기 전에는 예외를 던져 파이프라인을 중단한다 (환경 플래그 HOLD_RETENTION_CONFIRMED)
-      -- TODO: 플래그 구현 방식 dev에서 확정 (settings 테이블 vs env → 함수 인자)
+      -- r2 (GPT 판정 Q2): DB 소유 policy_settings.hold_retention_days가 null이면
+      -- hold가 필요한 탈퇴를 거부 (§12-3 — 보존기간 확정 전 production hold 생성 금지)
+      select value::int into v_days from private.policy_settings where key = 'hold_retention_days';
+      if v_days is null then
+        raise exception 'hold retention not configured — deletion requiring hold is blocked';
+      end if;
       insert into private.enforcement_holds (student_no_hmac, hmac_key_version, hold_reason, retention_until)
-      values (v_hmac, v_ver, v_reason, null)
+      values (v_hmac, v_ver, v_reason, now() + make_interval(days => v_days))
       on conflict do nothing;
     end if;
   end if;
@@ -400,9 +418,8 @@ begin
   update public.comments c set author_nickname = null, author_withdrawn_at = now(), anon_alias_no = null
     from public.comment_owners o
     where o.comment_id = c.id and o.user_id = p_member_id and c.author_withdrawn_at is null;
-  -- TODO(검수 질문): 익명 댓글의 anon_alias_no 비정규화 값을 null로 지울지(연결 추론 차단 강화)
-  --   유지할지(화면 번호 유지 — §5.4는 "표시 유지"라 했으나 §13은 "연결 식별자 제거") — GPT 판단 요청.
-  --   위 초안은 §13 우선으로 null 처리.
+  -- r2 (GPT 판정 Q3 확정): 탈퇴 회원의 댓글만 anon_alias_no null (§13이 §5.4보다 우선).
+  --   다른 활성 회원의 별칭·매핑은 유지. 공개 표시는 전부 "탈퇴한 사용자".
 
   -- ⑦ 연결 행 삭제
   delete from public.post_owners where user_id = p_member_id;
@@ -412,14 +429,24 @@ begin
   delete from private.post_views where member_id = p_member_id;
   delete from public.bookmarks where member_id = p_member_id;
   delete from public.post_votes where member_id = p_member_id;
-  -- TODO(검수 질문): 탈퇴자의 추천 삭제 시 vote_count 감소 여부 — 트리거가 처리하지만
-  --   "타인의 추천 수 유지" 관점에서 탈퇴자 본인이 남긴 추천만 삭제되는 것이 §13 취지에 맞는지 확인.
+  -- r2 (GPT 판정 Q4 확정): 탈퇴자 본인 추천은 명시적 DELETE — vote 트리거가 1회 실행되어
+  --   vote_count 감소. 이후 member cascade 시점엔 행이 이미 없어 재처리 없음.
+  --   post_views 삭제는 view_count를 감소시키지 않음 (조회수는 참고 통계 §0).
 end $$;
 
--- EXECUTE: service_role만
-revoke execute on function private.prepare_account_deletion(uuid) from public, anon, authenticated;
-grant execute on function private.prepare_account_deletion(uuid) to service_role;
-revoke execute on function private.detach_member_content(uuid) from public, anon, authenticated;
-grant execute on function private.detach_member_content(uuid) to service_role;
+-- r2 (GPT 2차 §2): 트랙 B는 public 얇은 래퍼(service_role EXECUTE)로 통일
+create or replace function public.prepare_account_deletion(p_member_id uuid)
+returns void language sql security definer set search_path = '' as $$
+  select private.prepare_account_deletion(p_member_id);
+$$;
+revoke execute on function public.prepare_account_deletion(uuid) from public, anon, authenticated;
+grant execute on function public.prepare_account_deletion(uuid) to service_role;
+
+create or replace function public.detach_member_content(p_member_id uuid)
+returns void language sql security definer set search_path = '' as $$
+  select private.detach_member_content(p_member_id);
+$$;
+revoke execute on function public.detach_member_content(uuid) from public, anon, authenticated;
+grant execute on function public.detach_member_content(uuid) to service_role;
 
 commit;

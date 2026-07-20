@@ -11,6 +11,16 @@ begin;
 --    dev 리허설 단계에서 실측 확인 항목)
 create schema if not exists private;
 
+-- 1-1. authz 스키마 (GPT 2차 검수 반영): RLS 전용 헬퍼 함수 격리.
+--      테이블 없음. PostgREST exposed schemas에 미추가 → 클라이언트가 RPC로
+--      직접 호출 불가 (특히 is_blocked_author가 "동일 작성자 확인 오라클"이
+--      되는 것을 차단). RLS 평가는 스키마 노출과 무관하게 동작.
+create schema if not exists authz;
+revoke usage, create on schema authz from public;
+revoke create on schema authz from anon, authenticated;
+grant usage on schema authz to authenticated, anon;   -- RLS 평가 경로에 필요한 USAGE만
+alter default privileges in schema authz revoke execute on functions from public;
+
 -- 2. 스키마 자체 권한 차단 (§1 v1.3)
 --    테이블 권한 이전에 스키마 USAGE부터 차단한다.
 revoke usage, create on schema private from public;

@@ -416,6 +416,31 @@ create policy operational_messages_self on public.operational_messages
 -- 읽음 처리는 003의 mark_message_read RPC (직접 update 권한 없음)
 
 -- ------------------------------------------------------------
+-- K-2. private: policy_settings (GPT 2차 판정 Q2 — DB 소유 단일 정책 설정)
+--      hold_retention_days가 null이면 hold가 필요한 탈퇴를 함수가 거부 (§12-3).
+--      환경값을 클라이언트 인자로 받지 않기 위한 서버·DB 내부 설정.
+-- ------------------------------------------------------------
+create table private.policy_settings (
+  key   text primary key,
+  value text
+);
+insert into private.policy_settings (key, value) values ('hold_retention_days', null);
+alter table private.policy_settings enable row level security;
+revoke all on private.policy_settings from anon, authenticated;
+
+-- 배치 실행 기록 (§9 — GPT 2차 §7: 기반 테이블이므로 002에 배치)
+create table private.batch_runs (
+  job_name        text primary key,
+  last_success_at timestamptz,
+  last_run_at     timestamptz,
+  last_processed  int,
+  fail_streak     int not null default 0,
+  last_error      text
+);
+alter table private.batch_runs enable row level security;
+revoke all on private.batch_runs from anon, authenticated;
+
+-- ------------------------------------------------------------
 -- L. private: guest_reads / guest_ip_daily (§8 — v1.3에서 ip_daily 정식 등재)
 -- ------------------------------------------------------------
 create table private.guest_reads (

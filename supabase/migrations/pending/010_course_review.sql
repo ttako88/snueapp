@@ -648,6 +648,81 @@ end $$;
 revoke execute on function public.withdraw_course_review(bigint) from public, anon, authenticated;
 grant  execute on function public.withdraw_course_review(bigint) to authenticated;
 
+-- ------------------------------------------------------------
+-- 11. 정정본 생성 (correction)
+--     "게시 후 원문 덮어쓰기 금지, 대신 정정본"의 실제 경로.
+--     구버전 corrected 전환과 신버전 생성이 **한 트랜잭션**이어야 한다.
+--
+--     ⚠️ 알려진 트레이드오프: 활성 슬롯이 (subject, alias, semester) 하나뿐이라
+--     구버전을 내리는 순간 신버전이 검토 대기(submitted)면 그 사이 공개 콘텐츠가
+--     없다. 자유서술을 고치는 정정은 재검토가 필요하므로 불가피하다.
+--     구조화 항목만 고치는 정정은 body가 없으므로 바로 published로 간다.
+--     (검토 중에도 구버전을 보여주려면 활성 슬롯 설계를 바꿔야 하므로 다음 배치 논의)
+-- ------------------------------------------------------------
+create or replace function public.correct_course_review(
+  p_review_id   bigint,
+  p_attendance  text default null,
+  p_exam_count  smallint default null,
+  p_assignment  text default null,
+  p_team_project text default null,
+  p_grading     text default null,
+  p_body        text default null)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare
+  v_old private.course_reviews%rowtype;
+  v_new bigint;
+  v_status text;
+begin
+  if not authz.is_writable_member() then raise exception 'not allowed'; end if;
+
+  -- 대상 잠금 — 동시에 두 번 정정하면 하나만 성공해야 한다
+  select * into v_old from private.course_reviews r
+   where r.id = p_review_id for update;
+  if v_old.id is null then raise exception 'not found'; end if;
+
+  -- 본인 것만
+  if v_old.member_id is distinct from auth.uid() then raise exception 'not found'; end if;
+
+  -- 현재 공개 중인 버전만 정정 대상. preserved_for_case(사건 보존 중)는 금지.
+  if v_old.status <> 'published' then
+    return jsonb_build_object('status','not_correctable','current',v_old.status);
+  end if;
+
+  -- 자유서술이 바뀌면 재검토가 필요하다 (사전검토 원칙)
+  v_status := case when p_body is null then 'published' else 'submitted' end;
+
+  -- 구버전 내리기
+  update private.course_reviews r
+     set status = 'corrected', updated_at = clock_timestamp()
+   where r.id = p_review_id;
+
+  -- 신버전: subject·alias·semester·member·contribution을 그대로 승계한다.
+  -- (contribution을 승계해야 보상·회수가 같은 대상을 가리킨다)
+  insert into private.course_reviews (
+    subject_id, member_id, actor_alias_id, contribution_id, semester, status,
+    attendance, exam_count, assignment, team_project, grading, body,
+    supersedes_id, published_at)
+  values (
+    v_old.subject_id, v_old.member_id, v_old.actor_alias_id, v_old.contribution_id,
+    v_old.semester, v_status,
+    coalesce(p_attendance,   v_old.attendance),
+    coalesce(p_exam_count,   v_old.exam_count),
+    coalesce(p_assignment,   v_old.assignment),
+    coalesce(p_team_project, v_old.team_project),
+    coalesce(p_grading,      v_old.grading),
+    p_body,
+    v_old.id,
+    case when v_status = 'published' then clock_timestamp() end)
+  returning id into v_new;
+
+  -- ★ 정정에는 보상을 다시 주지 않는다 (원장에 아무것도 넣지 않음)
+  return jsonb_build_object('status','ok','new_review_id',v_new,'new_status',v_status);
+end $$;
+revoke execute on function public.correct_course_review(bigint, text, smallint, text, text, text, text)
+  from public, anon, authenticated;
+grant  execute on function public.correct_course_review(bigint, text, smallint, text, text, text, text)
+  to authenticated;
+
 commit;
 
 -- ============================================================

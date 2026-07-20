@@ -187,6 +187,53 @@ async function main() {
       `insert into private.ticket_ledger (member_id,delta,reason,reverses_entry_id,idempotency_key)
        values (${A},20,'clawback',${rv.id},'rev-of-rev')`);
 
+    // ── 정정본 RPC (correction) ──
+    // 새 대상에서 깨끗하게: 발행된 리뷰 하나를 만들고 정정해 본다
+    await client.query(`insert into private.course_review_subjects (id, course_key, professor_key, course_name_display, professor_display)
+      values (9004,'정정테스트','정교수','정정 테스트','정교수')`);
+    const alC2 = await alias(9004, A_UUID);
+    const { rows: [pubR] } = await client.query(
+      `insert into private.course_reviews (subject_id,member_id,actor_alias_id,semester,status,grading,published_at)
+       values (9004,${A},${alC2},'2025-1','published','보통',now()) returning id, contribution_id`);
+
+    await actAs(A_UUID);
+    const corr = (await client.query(
+      `select public.correct_course_review(${pubR.id}, null, null, null, null, '깐깐함') r`)).rows[0].r;
+    rec("정정본 생성(구조화 항목만 → 바로 공개)", corr.status === "ok" && corr.new_status === "published",
+      JSON.stringify(corr).slice(0, 60));
+
+    const { rows: [chain] } = await client.query(
+      `select (select status from private.course_reviews where id=${pubR.id}) old_status,
+              (select contribution_id from private.course_reviews where id=${corr.new_review_id}) new_contrib,
+              (select supersedes_id from private.course_reviews where id=${corr.new_review_id}) sup,
+              (select grading from private.course_reviews where id=${corr.new_review_id}) g`);
+    rec("구버전 corrected + contribution 승계 + supersedes 연결",
+      chain.old_status === "corrected" && chain.new_contrib === pubR.contribution_id &&
+      String(chain.sup) === String(pubR.id) && chain.g === "깐깐함",
+      `old=${chain.old_status} sup=${chain.sup}`);
+
+    const { rows: [noPay] } = await client.query(
+      `select count(*)::int n from private.ticket_ledger where contribution_id = '${pubR.contribution_id}'`);
+    rec("정정에는 보상을 다시 주지 않음", noPay.n === 0, `${noPay.n}건`);
+
+    const again2 = (await client.query(
+      `select public.correct_course_review(${pubR.id}, null, null, null, null, '보통') r`)).rows[0].r;
+    rec("이미 corrected된 구버전은 재정정 불가", again2.status === "not_correctable", again2.status);
+
+    // 자유서술을 고치면 재검토 대기로 간다
+    const corr2 = (await client.query(
+      `select public.correct_course_review(${corr.new_review_id}, null, null, null, null, null, '설명을 보탭니다') r`)).rows[0].r;
+    rec("자유서술 정정은 검토 대기(submitted)", corr2.status === "ok" && corr2.new_status === "submitted",
+      corr2.new_status);
+
+    // 사건 보존 중인 평가는 정정 금지
+    await client.query(`update private.course_reviews set status='preserved_for_case' where id=${corr2.new_review_id}`);
+    const corr3 = (await client.query(
+      `select public.correct_course_review(${corr2.new_review_id}, null, null, null, null, '보통') r`)).rows[0].r;
+    rec("사건 보존 중(preserved_for_case)인 평가는 정정 불가", corr3.status === "not_correctable", corr3.status);
+    await client.query(`update private.course_reviews set status='withdrawn_by_author', withdrawn_at=now()
+       where id=${corr2.new_review_id}`);
+
     // ── 통계: 표본은 '서로 다른 작성자' ──
     const ALS = alOther;  // 위에서 만든 9002·A의 별칭 재사용 (한 과목 한 회원 1개)
     for (let i = 0; i < 10; i++) {

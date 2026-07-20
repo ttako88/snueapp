@@ -72,6 +72,10 @@ async function main() {
       return p.id;
     };
     const p1 = await mkPost("공지 후보");
+    // 일반회원이 쓴 글 (운영자 공지로 고정되면 안 됨)
+    await actAs(ME);
+    const pMember = await mkPost("학생이 쓴 글");
+    await actAs(OP);
     const pAnon = await mkPost("익명글", true);
     const pDel = await mkPost("삭제된 글");
     await client.query(`update public.posts set deleted_at = now() where id = ${pDel}`);
@@ -91,6 +95,8 @@ async function main() {
     await mustFail("과거 시각으로 만료 설정 불가",
       `select public.set_post_notice(${p1}, true, now() - interval '1 day', '사유')`);
 
+    await mustFail("일반회원이 쓴 글은 '운영자 공지'로 고정 불가(보증 오해 방지)",
+      `select public.set_post_notice(${pMember}, true, null, '유용한 글')`);
     await mustPass("운영자는 고정 가능",
       `select public.set_post_notice(${p1}, true, null, '학사일정 안내')`);
     const { rows: [pin] } = await client.query(

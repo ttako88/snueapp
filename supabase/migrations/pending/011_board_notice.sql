@@ -30,7 +30,11 @@ alter table public.posts
 --   고정 상태에서 non-null을 강제하지는 않는다.
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conname = 'posts_pin_consistent') then
+  -- 대상 테이블까지 한정한다 — 다른 스키마에 같은 이름의 제약이 있으면
+  -- 마이그레이션이 조용히 건너뛴다 (GPT MINOR 지적)
+  if not exists (select 1 from pg_constraint
+                  where conname = 'posts_pin_consistent'
+                    and conrelid = 'public.posts'::regclass) then
     alter table public.posts add constraint posts_pin_consistent
       check (pinned_at is not null
              or (pinned_until is null and pinned_by is null));
@@ -92,6 +96,19 @@ begin
     -- 익명 글은 공지로 쓰지 않는다 — 공지는 출처가 분명해야 한다
     if v_post.is_anonymous then
       raise exception 'cannot pin anonymous post';
+    end if;
+
+    -- (REQUIRED-011-N1) 이 기능의 이름은 "운영자 공지"다. 작성자도 운영자여야 한다.
+    -- 일반회원 글을 공지로 올리면 UI가 공식 공지처럼 보여주면서 **운영자가 그 말을
+    -- 보증하는 것처럼** 오해를 준다. 일반회원의 유용한 글을 띄우는 기능이 필요해지면
+    -- '추천 고정'이라는 별도 액션·배지로 분리한다.
+    -- (작성자가 탈퇴한 기존 공지는 그대로 두되 화면에서 "탈퇴한 운영자"로 표시)
+    if not exists (
+      select 1 from public.post_owners o
+        join private.members am on am.id = o.user_id
+       where o.post_id = p_post_id and am.role in ('operator','owner')
+    ) then
+      raise exception 'official notice must be authored by an operator';
     end if;
     if p_until is not null and p_until <= now() then
       raise exception 'pinned_until must be in the future';

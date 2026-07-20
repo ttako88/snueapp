@@ -282,6 +282,13 @@ begin
             select 1 from pg_class c where c.oid = d.objid and c.relnamespace in (select oid from app_ns)) then null
           when d.classid = 'pg_proc'::regclass and exists (
             select 1 from pg_proc p where p.oid = d.objid and p.pronamespace in (select oid from app_ns)) then null
+          -- ①' 승인된 public 앱 함수(래퍼)가 앱 스키마 impl에 의존 (GPT 추가 CASE — 정확 시그니처, 이름 비교 금지)
+          when d.classid = 'pg_proc'::regclass and exists (
+            select 1 from pg_proc p join pg_namespace pn on pn.oid = p.pronamespace
+            where p.oid = d.objid and pn.nspname = 'public'
+              and p.oid::regprocedure::text in (
+                select to_regprocedure(a.signature)::text from _reset_allowlist a
+                where a.kind = 'public_function' and to_regprocedure(a.signature) is not null)) then null
           when d.classid = 'pg_type'::regclass and exists (
             select 1 from pg_type t where t.oid = d.objid and t.typnamespace in (select oid from app_ns)) then null
           when d.classid = 'pg_attrdef'::regclass and exists (

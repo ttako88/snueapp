@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { loadAllSemesterCourses, loadTimetableSetup } from "../../lib/timetable";
+import { requiredAverage, maxReachableGpa, MAX_GPA } from "../../lib/gpaTarget";
 
 /* ---------- 상수 ---------- */
 const SEMESTERS = [];
@@ -31,7 +32,8 @@ function calc(rows) {
       }
     }
   }
-  return { gpa: gc ? w / gc : 0, majorGpa: mgc ? mw / mgc : 0, earned };
+  // gradedCredits(gc)·points(w)도 함께 돌려준다 — 목표 평점 역산에 필요
+  return { gpa: gc ? w / gc : 0, majorGpa: mgc ? mw / mgc : 0, earned, gradedCredits: gc, points: w };
 }
 
 // 성적별 글자색
@@ -45,6 +47,10 @@ export default function GpaPage() {
   const [semesters, setSemesters] = useState({});
   const [sel, setSel] = useState("1-1");
   const [loaded, setLoaded] = useState(false);
+  // 목표 평점 역산 (design.md §12.2)
+  const [targetOpen, setTargetOpen] = useState(false);
+  const [targetGpa, setTargetGpa] = useState("4.0");
+  const [remainCredits, setRemainCredits] = useState("");
 
   useEffect(() => {
     let saved = null;
@@ -133,6 +139,25 @@ export default function GpaPage() {
   const semStat = useMemo(() => calc(rows), [rows]);
   const totalStat = useMemo(() => calc(Object.values(semesters).flat()), [semesters]);
 
+  // 남은 학점 기본값: 졸업기준 − 취득학점 (사용자가 직접 고칠 수 있음)
+  const remainDefault = Math.max(GRAD_CREDIT - totalStat.earned, 0);
+  const remainNum = remainCredits === "" ? remainDefault : Number(remainCredits);
+  const targetArgs = {
+    currentPoints: totalStat.points,
+    gradedCredits: totalStat.gradedCredits,
+    targetGpa: Number(targetGpa),
+    remainingCredits: remainNum,
+  };
+  const targetResult = useMemo(
+    () => requiredAverage(targetArgs),
+    [totalStat.points, totalStat.gradedCredits, targetGpa, remainNum],
+  );
+  const maxGpa = maxReachableGpa({
+    currentPoints: totalStat.points,
+    gradedCredits: totalStat.gradedCredits,
+    remainingCredits: remainNum,
+  });
+
   if (!loaded) return null;
 
   return (
@@ -160,6 +185,64 @@ export default function GpaPage() {
           <p className="text-2xl font-extrabold tabular-nums">{totalStat.earned}</p>
           <p className="text-[10px] opacity-70">/ {GRAD_CREDIT}</p>
         </div>
+      </section>
+
+      {/* 목표 평점 역산 — "남은 학점으로 목표를 맞추려면 평균 몇 점?" */}
+      <section className="rounded-2xl bg-white p-4 shadow-sm">
+        <button
+          onClick={() => setTargetOpen((v) => !v)}
+          className="flex w-full items-center justify-between text-left"
+        >
+          <span className="text-sm font-bold text-[#0c4470]">🎯 목표 평점 계산</span>
+          <span className="text-xs text-[#0c4470]/30">{targetOpen ? "▲" : "▼"}</span>
+        </button>
+
+        {targetOpen && (
+          <div className="mt-3 flex flex-col gap-3">
+            <div className="grid grid-cols-2 gap-2">
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] font-bold text-[#0c4470]/50">목표 평점</span>
+                <input
+                  type="number" step="0.1" min="0" max={MAX_GPA} inputMode="decimal"
+                  value={targetGpa}
+                  onChange={(e) => setTargetGpa(e.target.value)}
+                  className="rounded-xl border border-black/10 px-3 py-2 text-sm tabular-nums text-[#0c4470] outline-none focus:border-[#0095da]"
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] font-bold text-[#0c4470]/50">남은 학점</span>
+                <input
+                  type="number" step="1" min="1" inputMode="numeric"
+                  value={remainCredits === "" ? remainDefault : remainCredits}
+                  onChange={(e) => setRemainCredits(e.target.value)}
+                  className="rounded-xl border border-black/10 px-3 py-2 text-sm tabular-nums text-[#0c4470] outline-none focus:border-[#0095da]"
+                />
+              </label>
+            </div>
+
+            {targetResult === null ? (
+              <p className="text-xs text-[#0c4470]/45">남은 학점을 1 이상으로 넣어주세요.</p>
+            ) : targetResult.status === "already" ? (
+              <p className="rounded-xl bg-[#e8f5ea] px-3 py-2.5 text-xs font-bold text-[#3f7a55]">
+                이미 목표를 넘었어요. 남은 과목을 모두 F 받아도 {targetGpa} 이상이에요.
+              </p>
+            ) : targetResult.status === "impossible" ? (
+              <p className="rounded-xl bg-[#fdecec] px-3 py-2.5 text-xs font-bold text-[#d05b6a]">
+                남은 {remainNum}학점을 모두 A+ 받아도 최대 {maxGpa.toFixed(2)}까지예요.
+                목표를 조금 낮추거나 남은 학점을 늘려보세요.
+              </p>
+            ) : (
+              <p className="rounded-xl bg-[#eaf6fd] px-3 py-2.5 text-xs text-[#0c4470]">
+                남은 {remainNum}학점에서 평균{" "}
+                <b className="text-base text-[#0095da]">{targetResult.required.toFixed(2)}</b>
+                {" "}이상 받으면 목표 {targetGpa}에 도달해요.
+                <span className="mt-0.5 block text-[11px] text-[#0c4470]/45">
+                  (현재 평점 계산에 들어간 학점 {totalStat.gradedCredits}학점 기준 · P·NP 제외)
+                </span>
+              </p>
+            )}
+          </div>
+        )}
       </section>
 
       {/* 학기 탭 */}

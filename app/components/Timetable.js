@@ -20,7 +20,7 @@ import {
   colorFor,
   conflicts,
   courseId,
-  groupCourses,
+  groupCoursesByName,
   ALL_COURSES,
 } from "../lib/timetable";
 
@@ -160,7 +160,8 @@ export default function Timetable({ editable = true }) {
   };
 
   function openSearch() {
-    setSearchGrade(setup?.grade || 1);
+    // 보고 있는 학기의 내 학년으로 기본값 — 이전 학기를 채울 때 설정 학년이 그대로 뜨던 버그 수정
+    setSearchGrade(viewGrade || setup?.grade || 1);
     setSearchDept("전체");
     setQuery("");
     setSearchOpen(true);
@@ -195,7 +196,8 @@ export default function Timetable({ editable = true }) {
 
   // 학년·과·검색어로 강의 필터 (이미 담은 건 제외). 학기는 내 시간표와 항상 같은 학기로 고정
   // — 학교가 A/B군마다 같은 강의를 매 학기 열다 보니 학기 섞으면 헷갈려서 검색도 시간표 학기로 묶음.
-  const searchResults = useMemo(() => {
+  // 결과는 성격별 섹션(전공/심화/교직/핵심·중점·자율교양) + 과목명별 낱개(분반만 접음).
+  const searchSections = useMemo(() => {
     const q = query.trim();
     const have = new Set(courses.map((c) => courseId(c)));
     const seen = new Set();
@@ -210,9 +212,9 @@ export default function Timetable({ editable = true }) {
       seen.add(k);
       return true;
     });
-    // 같은 이수요건(택1)이거나 같은 과목명이면 분반을 낱개로 안 보여주고 한 줄로 묶기
-    return groupCourses(flat);
+    return groupCoursesByName(flat);
   }, [query, searchGrade, searchDept, courses, setup, viewSem]);
+  const searchIsEmpty = searchSections.every((s) => s.groups.length === 0);
 
   function tapSearchGroup(g) {
     if (g.members.length === 1) {
@@ -368,39 +370,44 @@ export default function Timetable({ editable = true }) {
               className="mb-3 w-full shrink-0 rounded-xl bg-[#f2f6fa] px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#0095da]/40"
             />
             <div className="flex-1 overflow-y-auto">
-              {searchResults.length === 0 && (
+              {searchIsEmpty && (
                 <p className="py-8 text-center text-sm text-[#0c4470]/40">해당하는 강의가 없어요.</p>
               )}
-              <ul className="flex flex-col gap-1.5">
-                {searchResults.map((g) => {
-                  const c0 = g.members[0];
-                  return (
-                    <li key={g.key}>
-                      <button onClick={() => tapSearchGroup(g)} className="flex w-full items-center gap-2 rounded-xl bg-[#f7fafc] p-2.5 text-left active:bg-[#eaf6fd]">
-                        <span className="h-8 w-1 rounded-full" style={{ backgroundColor: colorFor(c0.name).bar }} />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium text-[#0c4470]">
-                            {g.label}{" "}
-                            <span className="text-[10px] font-bold text-[#0095da]/70">{c0.type}</span>
-                          </span>
-                          <span className="block truncate text-xs text-[#0c4470]/50">
-                            {g.isMulti
-                              ? `${g.members.length}개 중 택1 · ${c0.day}${c0.periods.join("")}교시 등`
-                              : `${c0.day}${c0.periods.join("")}교시 · ${c0.professor} · ${c0.room}`}
-                          </span>
-                        </span>
-                        <span className="shrink-0 text-lg font-bold text-[#0095da]">{g.isMulti ? "›" : "+"}</span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
+              {searchSections.map((sec) => (
+                <div key={sec.cat} className="mb-2">
+                  <p className="mb-1 mt-1 px-0.5 text-[11px] font-bold text-[#0c4470]/45">{sec.cat}</p>
+                  <ul className="flex flex-col gap-1.5">
+                    {sec.groups.map((g) => {
+                      const c0 = g.members[0];
+                      return (
+                        <li key={g.key}>
+                          <button onClick={() => tapSearchGroup(g)} className="flex w-full items-center gap-2 rounded-xl bg-[#f7fafc] p-2.5 text-left active:bg-[#eaf6fd]">
+                            <span className="h-8 w-1 rounded-full" style={{ backgroundColor: colorFor(c0.name).bar }} />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-sm font-medium text-[#0c4470]">{g.label}</span>
+                              <span className="block truncate text-xs text-[#0c4470]/50">
+                                {g.isMulti
+                                  ? `분반 ${g.members.length}개 · ${c0.day}${c0.periods.join("")}교시 등`
+                                  : `${c0.day}${c0.periods.join("")}교시 · ${c0.professor} · ${c0.room}`}
+                              </span>
+                              {g.reqLabel && (
+                                <span className="block truncate text-[10px] text-[#c79a2e]">{g.reqLabel}</span>
+                              )}
+                            </span>
+                            <span className="shrink-0 text-lg font-bold text-[#0095da]">{g.isMulti ? "›" : "+"}</span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
             </div>
           </div>
         </div>
       )}
 
-      {/* 분반/대체과목 상세선택 (같은 이수요건 안에서 고르기) */}
+      {/* 분반 상세선택 (같은 과목의 다른 시간대·교수 중 고르기) */}
       {groupDetail && (
         <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/30" onClick={() => setGroupDetail(null)}>
           <div className="flex max-h-[75%] w-full max-w-[480px] flex-col rounded-t-2xl bg-white p-4" onClick={(e) => e.stopPropagation()}>
@@ -408,7 +415,7 @@ export default function Timetable({ editable = true }) {
               <h3 className="text-base font-bold text-[#0c4470]">{groupDetail.label}</h3>
               <button onClick={() => setGroupDetail(null)} className="text-xl text-[#0c4470]/40">×</button>
             </div>
-            <p className="mb-3 text-xs text-[#0c4470]/50">이 중 하나를 골라 담으세요.</p>
+            <p className="mb-3 text-xs text-[#0c4470]/50">원하는 분반(시간대·교수)을 골라 담으세요.</p>
             <div className="flex-1 overflow-y-auto">
               <ul className="flex flex-col gap-1.5">
                 {groupDetail.members.map((c) => (

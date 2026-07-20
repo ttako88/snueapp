@@ -62,6 +62,13 @@ export const FEATURES = {
     needsDb: true,
     requires: "Gate 4a 운영배포 완료",
   },
+  bugReport: {
+    enabled: false,
+    label: "버그제보",
+    summary: "설정에서 버그 제보 + 내 제보 처리상태 확인",
+    needsDb: true,
+    requires: "Gate 4a 운영배포 완료",
+  },
   mealTicketMarket: {
     enabled: false,
     label: "식권 마켓",

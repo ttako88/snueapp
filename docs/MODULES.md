@@ -42,6 +42,7 @@ tests/<기능>.test.mjs         ← node --test
 | 추천/반대 `postVote` | 🟡 DB 완료 | 필요 (`pending/012`) | Gate 4a 배포 (화면 미작성) |
 | 스크랩 `bookmark` | 🟡 DB 완료 | 필요 (`pending/012`) | Gate 4a 배포 (화면 미작성) |
 | 신고 `report` | 🟡 DB 완료 | 필요 (`pending/012`) | Gate 4a 배포 (화면 미작성) |
+| 버그제보 `bugReport` | 🟡 DB 완료 | 필요 (`pending/013`) | Gate 4a 배포 (화면 미작성) |
 | 식권 마켓 `mealTicketMarket` | 🔲 대기 | 필요 | Gate 4a 배포 |
 | 소셜 로그인 `socialLogin` | 🔲 대기 | 불필요 | Gate 4a 배포 + 키 발급 |
 

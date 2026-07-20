@@ -5,7 +5,7 @@
 
 ## ★ 재개 앵커 (2026-07-20 현재)
 - **동결 SHA**: Gate 4a DB(001~008) = `6746127` (dev clean replay 66/66). 서버부(009 RPC+maintenance 코드+테스트) = `cc8b43b` (dev 적용·통합 8/8·행동 6+2 PASS, 009 원문 SHA-256 `faff5f85…`).
-- **GitHub/운영 배포**: `origin/main` = `812fe5e` (이전 `cb3e7ab`에서 **운영 CODE 배포 완료** — 사용자 "승인할게" + "코드만 먼저" 승인). Vercel Production 라이브 검증: 기능 #1(게시판 중립문구)·#2(캘린더 4종 토글) 실제 URL 확정, 콘솔 오류 0. 커뮤니티 백엔드(maintenance Route·009 파일)는 **잠자는 코드로만 배포**(MAINTENANCE_ENABLED 미설정 → disabled, vercel.json 없음 → cron 미호출, prod DB 무접촉).
+- **GitHub/운영 배포**: `origin/main` = `1d5def9` (코드-only). 이력: cb3e7ab→812fe5e(기능4개)→a6f0c33(문서)→**1d5def9(UI hotfix c5dccd7: 교양 목록 성격별 분리·택1 낱개·dept 정규화, 사용자 "GO-DEPLOY-UI-HOTFIX" 승인)**. 라이브 스모크 통과(영어과 2학년 2026-1 교양 핵심/중점/자율 노출, 콘솔 0). `integration/gate4a-preproduction` = `40f7210`. 커뮤니티 백엔드는 여전히 **잠자는 코드**(MAINTENANCE_ENABLED 미설정→disabled, prod에 vercel.json 미배포→cron 미호출, prod DB 무접촉).
 - **상태 문구(GPT 확정)**: "Phase 5a — 코드/UI 선행 배포 완료. Production DB 전환·Maintenance 활성화는 미실행." 라이브 비파괴 확인: `GET /api/maintenance?job=stale-reviews` = `200 {"status":"disabled"}` (secret 없이, 변경 0).
 - **다음 = GPT 런북 P0-1~P0-9 해소 (integration 브랜치, Production 무접촉).** 완료: P0-1(009 활성승격, SHA faff5f85 동일)·P0-3(env명 SUPABASE_SECRET_KEY 통일, 76/76+build)·P0-2(vercel.json 4경로)·P0-9(OPERATIONS 로컬기본=dev). 남음: P0-4(owner bootstrap)·P0-5(reset SQL)·P0-6(dev clean replay 001~009)·P0-7(Route dev E2E)·P0-8(Preview 검증) → 새 RC 동결. **P0 완료 전 main 재병합 금지(GPT).** 이후 운영 수렴은 GPT 런북 A~Q 순서, 각 파괴 단계는 지정 문구(BACKUP-OK / GO-RESET-PROD / GO-DEPLOY-RC / OWNER-BOOTSTRAP-OK / GO-ENABLE-PROD-CRON)로만.
 - **운영 금지선(사용자 명시 승인 전 절대 금지, 여전히 유효)**: 운영 Supabase 001~009 적용(파괴적 재기반), 운영 계정/데이터 삭제, 운영 Cron/env/OAuth 활성화, 운영 service_role/CRON_SECRET 등록, 재가입·owner 부팅(실명·학번). — **코드 배포는 이번에 완료됐고, 위 파괴적/비밀 단계만 남음.**

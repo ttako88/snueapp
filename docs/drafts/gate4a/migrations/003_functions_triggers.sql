@@ -635,7 +635,7 @@ begin
     insert into private.guest_reads (cookie_hmac, post_id, read_date, expires_at)
       values (p_cookie_hmac, p_post_id, v_date, now() + interval '48 hours');
     v_new := true;                                                    -- advisory lock 하 재확인이므로 충돌 없음
-    update public.posts set view_count = view_count + 1 where id = p_post_id;
+    update public.posts p set view_count = p.view_count + 1 where p.id = p_post_id;  -- 별칭: 반환컬럼 view_count와 모호성 제거
   end if;
 
   return query select true, null::text, v_post.title, v_post.body,

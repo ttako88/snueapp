@@ -10,10 +10,12 @@
 //  - dev/prod 프로젝트 ID 혼동 방지 (URL의 project ref를 TARGET_ENV 기대값과 대조)
 //  - 실제 삭제 기능 없음 (이 스크립트는 생성·검증만)
 //
-// 실행 예: node provision-storage.mjs                → dry-run (기본)
-//          TARGET_ENV=dev node provision-storage.mjs --apply
-// env: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / TARGET_ENV(dev|prod) /
+// 실행 예: node provision-storage.mjs                → dry-run (원격 읽기 전용·변경 없음)
+//          node provision-storage.mjs --offline-plan  → 완전 무접촉, 기대 설정만 출력
+//          APP_ENV=dev node provision-storage.mjs --apply
+// env: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / APP_ENV(dev|prod) /
 //      EXPECTED_PROJECT_REF_DEV / EXPECTED_PROJECT_REF_PROD  (값은 env에만 — 코드 미기재)
+// r4: dry-run도 원격 읽기이므로 APP_ENV·EXPECTED_PROJECT_REF 검증을 통과해야 조회함
 // ============================================================
 import { createClient } from "@supabase/supabase-js";
 
@@ -25,41 +27,44 @@ const EXPECTED = {
 };
 
 const apply = process.argv.includes("--apply");
+const offlinePlan = process.argv.includes("--offline-plan");
 const url = process.env.SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const targetEnv = process.env.TARGET_ENV;
+const appEnv = process.env.APP_ENV;   // r4: TARGET_ENV → APP_ENV 통일 (dev|prod, 그 외 중단)
 
-function fail(msg, code = 1) { console.error(`[fail] ${msg}`); process.exit(code); }
+// r4: 고정 오류 코드만 출력 (원문·secret 비출력, 운영자가 분류 가능)
+//   env_missing / env_invalid / ref_mismatch / bucket_not_found / config_mismatch / api_failure / verify_failure
+function fail(codeName, exit = 1) { console.error(`[fail] ${codeName}`); process.exit(exit); }
 
-if (!url || !key) fail("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 필요");
-if (apply && !["dev", "prod"].includes(targetEnv ?? ""))
-  fail("--apply에는 TARGET_ENV=dev|prod 필수 (dry-run은 불필요)");
-
-// dev/prod 혼동 방지: URL의 project ref를 기대값과 대조
+if (offlinePlan) {                    // 완전 무접촉 모드: 기대 설정만 출력
+  console.log("[offline-plan] 기대 설정:", JSON.stringify({ bucket: BUCKET, ...EXPECTED }));
+  process.exit(0);
+}
+if (!url || !key) fail("env_missing");
+// r4: dry-run도 원격 읽기(getBucket)를 하므로 환경 검증을 모든 네트워크 모드에 적용
+if (!["dev", "prod"].includes(appEnv ?? "")) fail("env_invalid");
 const ref = new URL(url).hostname.split(".")[0];
-const expectedRef = targetEnv === "prod"
+const expectedRef = appEnv === "prod"
   ? process.env.EXPECTED_PROJECT_REF_PROD
   : process.env.EXPECTED_PROJECT_REF_DEV;
-if (apply) {
-  if (!expectedRef) fail(`EXPECTED_PROJECT_REF_${targetEnv.toUpperCase()} 미설정 — 대상 확인 불가`);
-  if (ref !== expectedRef) fail(`project ref 불일치 — URL은 '${ref}', ${targetEnv} 기대값과 다름. 중단`);
-}
-console.log(`[mode] ${apply ? "APPLY" : "dry-run"} / target=${targetEnv ?? "(미지정)"} / bucket=${BUCKET}`);
+if (!expectedRef) fail("env_missing");
+if (ref !== expectedRef) fail("ref_mismatch");
+console.log(`[mode] ${apply ? "APPLY" : "dry-run (원격 읽기 전용·변경 없음)"} / env=${appEnv} / bucket=${BUCKET}`);
 
 const supabase = createClient(url, key, { auth: { persistSession: false } });
 
 const { data: existing, error: getErr } = await supabase.storage.getBucket(BUCKET);
-if (getErr && !/not found/i.test(getErr.message)) fail(`getBucket 오류 (메시지 생략 — secret 비출력)`);
+if (getErr && !/not found/i.test(getErr.message)) fail("api_failure");
 
+// r4: 정규화 비교 — MIME은 순서 무관 정렬, size는 숫자 바이트
+const normMimes = (a) => [...(a ?? [])].map(String).sort().join(",");
 if (existing) {
-  // 비교만 — 불일치 시 실패·보고 (조용한 덮어쓰기 금지)
   const diffs = [];
   if (existing.public !== EXPECTED.public) diffs.push("public");
   if (Number(existing.file_size_limit) !== EXPECTED.fileSizeLimit) diffs.push("file_size_limit");
-  const mimes = existing.allowed_mime_types ?? [];
-  if (mimes.length !== EXPECTED.allowedMimeTypes.length
-      || !EXPECTED.allowedMimeTypes.every((m) => mimes.includes(m))) diffs.push("allowed_mime_types");
-  if (diffs.length > 0) fail(`버킷 존재하나 설정 불일치: ${diffs.join(", ")} — 수동 확인 필요`, 2);
+  if (normMimes(existing.allowed_mime_types) !== normMimes(EXPECTED.allowedMimeTypes))
+    diffs.push("allowed_mime_types");
+  if (diffs.length > 0) { console.error(`[detail] ${diffs.join(",")}`); fail("config_mismatch", 2); }
   console.log("[ok] 버킷 존재 + 설정 일치 (변경 없음)");
 } else if (!apply) {
   console.log("[dry-run] 버킷 없음 → --apply 시 생성 예정 (private, 10MB, JPEG/PNG/WebP/PDF)");
@@ -69,9 +74,9 @@ if (existing) {
     fileSizeLimit: EXPECTED.fileSizeLimit,
     allowedMimeTypes: EXPECTED.allowedMimeTypes,
   });
-  if (error) fail("createBucket 실패 (메시지 생략)");
+  if (error) fail("api_failure");
   const { data: after } = await supabase.storage.getBucket(BUCKET);
-  if (!after || after.public !== false) fail("생성 후 검증 실패 — public=false 확인 불가", 2);
+  if (!after || after.public !== false) fail("verify_failure", 2);
   console.log("[ok] 버킷 생성 + private 검증 완료");
 }
 // 이 스크립트에 삭제 기능은 없다. Storage RLS 정책은 005_storage_policies.sql 소관.

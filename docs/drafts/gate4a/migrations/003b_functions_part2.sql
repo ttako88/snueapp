@@ -7,6 +7,43 @@
 begin;
 
 -- ------------------------------------------------------------
+-- 0-a. maintenance lease (r4 — GPT 3차 §2: 서버 작업 중복 실행 방지)
+-- ------------------------------------------------------------
+create or replace function private.acquire_maintenance_lease(p_job text, p_duration_sec int)
+returns uuid language plpgsql security definer set search_path = '' as $$
+declare v_token uuid := gen_random_uuid();
+begin
+  insert into private.maintenance_leases as l (job_name, lease_token, leased_until, started_at)
+  values (p_job, v_token, now() + make_interval(secs => p_duration_sec), now())
+  on conflict (job_name) do update
+    set lease_token = v_token, leased_until = now() + make_interval(secs => p_duration_sec),
+        started_at = now()
+    where l.leased_until is null or l.leased_until < now();   -- 만료된 lease만 회수
+  if not found then return null; end if;                      -- 유효 lease 존재 → already_running
+  return v_token;
+end $$;
+
+create or replace function private.release_maintenance_lease(p_job text, p_token uuid)
+returns void language sql security definer set search_path = '' as $$
+  update private.maintenance_leases
+    set lease_token = null, leased_until = null
+    where job_name = p_job and lease_token = p_token;          -- 자기 토큰 일치 시만
+$$;
+
+create or replace function public.acquire_maintenance_lease(p_job text, p_duration_sec int)
+returns uuid language sql security definer set search_path = '' as $$
+  select private.acquire_maintenance_lease(p_job, p_duration_sec);
+$$;
+create or replace function public.release_maintenance_lease(p_job text, p_token uuid)
+returns void language sql security definer set search_path = '' as $$
+  select private.release_maintenance_lease(p_job, p_token);
+$$;
+revoke execute on function public.acquire_maintenance_lease(text, int) from public, anon, authenticated;
+grant execute on function public.acquire_maintenance_lease(text, int) to service_role;
+revoke execute on function public.release_maintenance_lease(text, uuid) from public, anon, authenticated;
+grant execute on function public.release_maintenance_lease(text, uuid) to service_role;
+
+-- ------------------------------------------------------------
 -- 0. record_batch_run (batch_runs 테이블은 002로 이동 — GPT 2차 §7)
 -- ------------------------------------------------------------
 create or replace function private.record_batch_run(p_job text, p_ok boolean, p_n int, p_err text)

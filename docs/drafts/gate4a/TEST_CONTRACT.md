@@ -82,6 +82,18 @@
 - [T-G-07] todo — (r2) 30일 정리: 하위 댓글 포함 트리째 삭제, 글·하위 댓글 어느 쪽이든 열린 사건 있으면 전체 보존
 - [T-G-08] todo — (r2) 배치 실패 시 본문 롤백+batch_runs 실패 기록 보존, 3연속 실패 owner 메시지
 
+## X. maintenance Route·서버 작업 (r4 — GPT 3차)
+- [T-X-01] todo — GET+정상 Bearer만 실행. POST는 405
+- [T-X-02] todo — MAINTENANCE_ENABLED 미설정/false → 인증 무관 무작업 disabled
+- [T-X-03] todo — 잘못된 secret·16자 미만 secret·잘못된 project ref·미등록 job → 전부 무작업
+- [T-X-04] todo — 동일 job 동시 2회 호출 중 1회만 lease 획득, 나머지는 already_running
+- [T-X-05] todo — lease 만료(leased_until 경과) 후 다음 실행이 회수
+- [T-X-06] todo — upload_expired 전이 후 Storage 삭제 실패 → 다음 실행이 재선별·정리
+- [T-X-07] todo — 3/7일 owner 경고 중복 발송 없음 (owner_warned_*_at 컬럼 대조)
+- [T-X-08] todo — signed upload는 성공하면서 anon/authenticated의 storage.objects 직접 접근은 실패
+- [T-X-09] todo — Vercel 중복 호출 시나리오에서 계정 삭제·파기 결과 동일 (멱등)
+- [T-X-10] todo — provision-storage: config 불일치 시 변경 없이 실패, dry-run도 ref 검증 선행
+
 ## W. 탈퇴 콘텐츠 13종 (§13 — v1.3)
 - [T-W-01] todo — 비삭제 글·댓글 내용 유지
 - [T-W-02] todo — 작성자 표시 전원 동일 "탈퇴한 사용자"

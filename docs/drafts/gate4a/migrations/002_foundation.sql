@@ -109,6 +109,10 @@ create table private.verification_requests (
   reviewer_id      uuid,
   reject_reason_code text
     check (reject_reason_code in ('unreadable','mismatch','expired_doc','wrong_doc','suspected_forgery','other')),
+  -- 장기 미처리 알림 발송 기록 (r4 — 중복 발송 방지, 메시지 조회 대조 금지)
+  owner_warned_3_at    timestamptz,
+  owner_warned_7_at    timestamptz,
+  user_delay_notified_at timestamptz,
   -- 파기 추적 (§4.4)
   purge_after      timestamptz,       -- 큐 진입 시 계산된 실제 파기 가능 시각 (v1.3)
   purge_started_at timestamptz,
@@ -427,6 +431,16 @@ create table private.policy_settings (
 insert into private.policy_settings (key, value) values ('hold_retention_days', null);
 alter table private.policy_settings enable row level security;
 revoke all on private.policy_settings from anon, authenticated;
+
+-- 서버 작업 중복 실행 방지 lease (r4 — GPT 3차: Vercel Cron 중복 호출 대비)
+create table private.maintenance_leases (
+  job_name    text primary key,
+  lease_token uuid,
+  leased_until timestamptz,
+  started_at  timestamptz
+);
+alter table private.maintenance_leases enable row level security;
+revoke all on private.maintenance_leases from anon, authenticated;
 
 -- 배치 실행 기록 (§9 — GPT 2차 §7: 기반 테이블이므로 002에 배치)
 create table private.batch_runs (

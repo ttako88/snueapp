@@ -17,8 +17,17 @@
 
 - GATE4A_PLAN.md 초안 v0.1 → GPT "수정 후 자동 승인" 6건(승인 2단계 분리/동결 SHA만 운영 적용/백업·초기화 구체화/서버 Cron 실행부 보완/부트스트랩→smoke 순서/P3 차단 축소) → 전부 반영, **v0.2 커밋 (bdfa218)**. 상태: "4a 계획 승인 · 실행 승인 대기".
 - Claude 제안 "Gate 4a 산출물 초안 파일 작성(실행 0건)" → GPT **진행 승인** (조건: 비활성 경로 docs/drafts/gate4a/, DRAFT_MANIFEST 우선, 실행·push·env·실값 금지, 배치 검수 001·002 → 003·004 → 서버 잡).
-- 초안 일체 작성·커밋 (c0dd165): MANIFEST, TEST_CONTRACT(51케이스 todo), 001~004 SQL, provision-storage, server-jobs 계약, vercel.cron 예시.
-- 001·002 전문 GPT 배치 검수 제출 → 검수 대기 중.
+- 초안 일체 작성·커밋 (c0dd165): MANIFEST, TEST_CONTRACT, 001~004 SQL, provision-storage, server-jobs 계약, vercel.cron 예시. 003b(모더레이션·배치·탈퇴 파이프라인 DB 함수)도 추가 (5039d46).
+- **GPT 배치 검수 3라운드 완료**:
+  - 1차(001·002): 조건부 통과, 7건 반영 (ad906cf) — public CREATE 차단·컬럼 단위 grant·member FK cascade·CHECK 보강·holds released_at 폐기 등.
+  - 2차(003·003b·004): 조건부 통과, 8건+판정 4건 반영 (2d4f070) — authz 스키마(오라클 차단)·트랙 B public 래퍼 통일·컬럼 권한 기반 보호·advisory lock claim·가시성 검사·해제 대칭·policy_settings·30일 트리 삭제 등.
+  - 3차(Storage·서버 잡): 조건부 통과, 병행 3건(733a188)+마감 6건 반영 — maintenance Route GET 전환(Vercel Cron은 GET)·maintenance_leases(중복 실행 방지)·알림 발송 시각 컬럼·005 정책 0개 확정+allowlist 정리·provision-storage 오류코드/정규화 비교/dry-run에도 ref 검증·APP_ENV/HMAC 버전 규칙/CRON_SECRET 16자 규칙. **GPT: "6건 반영 후 3차 통과 간주, 추가 검수 라운드 불필요"**.
+- TEST_CONTRACT 최종 75케이스 (전부 todo — 테이블이 없으니 실행 불가가 정상).
+
+## 최종 상태 (기상 시점)
+- **Gate 3: 완전 종료** (v1.3 승인·커밋 dacd7ab).
+- **Gate 4a: 계획 승인 + 산출물 초안 전부 GPT 검수 완료** — "실행 승인 대기" 상태. 사용자 P2 승인만 있으면 dev 리허설을 바로 시작할 수 있음.
+- 외부 무접촉 확인: DB·Storage·Auth·Vercel·env·push 일체 접촉 없음. SQL 0회 실행. 전부 docs/drafts/gate4a/ 로컬 파일+로컬 커밋.
 
 ## 이견 로그 (이견 발생 → GPT안 채택 기록)
 - 실질적 이견 없음. GPT 보완 2건은 정책 변경이 아니라 실행 가능성·문구 정합 보완이라 그대로 수용 (보편적 패턴: private 로직 + public 최소 노출 래퍼는 Supabase 표준 관행).

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { eventStyle } from "../lib/eventStyle";
+import { loadHiddenKinds, isKindHidden } from "../lib/calendarFilters";
 
 /* ---------- 날짜 도구 ---------- */
 const DAYMS = 86400000;
@@ -127,9 +128,9 @@ export default function CalendarPage() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(null);
 
-  // 하단 일별목록 패널 높이(드래그) + 대학원 일괄숨김
+  // 하단 일별목록 패널 높이(드래그) + 일정 종류별 표시 숨김
   const [panelH, setPanelH] = useState(280);
-  const [hideGrad, setHideGrad] = useState(false);
+  const [hiddenKinds, setHiddenKinds] = useState([]); // 숨긴 일정 종류 key 목록
   const dragRef = useRef(null);
 
   // e-Class 연동 일정 (연결 안 돼 있으면 그냥 빈 목록으로 조용히 지나감)
@@ -148,7 +149,7 @@ export default function CalendarPage() {
       if (Array.isArray(hid)) setHidden(hid);
       const ph = Number(localStorage.getItem("calPanelH"));
       if (ph >= 120) setPanelH(ph);
-      setHideGrad(localStorage.getItem("hideGrad") === "1");
+      setHiddenKinds(loadHiddenKinds());
     } catch {}
     setPLoaded(true);
   }, []);
@@ -202,15 +203,13 @@ export default function CalendarPage() {
 
   const hiddenSet = useMemo(() => new Set(hidden), [hidden]);
 
-  // 학교(숨김 제외) + 내 일정 + e-Class 마감(숨김 제외)
+  // 학교 + 내 일정 + e-Class 마감. 개별 숨김(스와이프) + 종류별 숨김(설정) 둘 다 적용.
   const allEvents = useMemo(() => {
-    const school = schoolEvents.filter(
-      (e) => !hiddenSet.has(hideKey(e)) && !(hideGrad && (e.detail || e.title || "").includes("대학원"))
-    );
     const mine = personal.map((e) => ({ ...e, source: "me" }));
-    const ecl = eclassEvents.filter((e) => !hiddenSet.has(hideKey(e)));
-    return [...school, ...mine, ...ecl];
-  }, [schoolEvents, personal, eclassEvents, hiddenSet, hideGrad]);
+    return [...schoolEvents, ...mine, ...eclassEvents].filter(
+      (e) => !hiddenSet.has(hideKey(e)) && !isKindHidden(hiddenKinds, e)
+    );
+  }, [schoolEvents, personal, eclassEvents, hiddenSet, hiddenKinds]);
 
   // 숨긴 항목(되돌리기 목록용) — 학사일정 + e-Class 둘 다
   const hiddenEvents = useMemo(() => {

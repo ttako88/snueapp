@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { SetupSheet } from "../components/Timetable";
 import { DEFAULT_SEMESTER, SEMESTER_LABELS, loadTimetableSetup, saveTimetableSetup } from "../lib/timetable";
 import { useAuth, signOut } from "../lib/identity/useAuth";
+import { CALENDAR_KINDS, loadHiddenKinds, saveHiddenKinds } from "../lib/calendarFilters";
 
 // 설정 항목 정의. 나중에 새 설정이 생기면 여기 섹션을 추가하면 됨
 // (앞으로 헤더 햄버거 메뉴로 옮기더라도 이 페이지 자체는 그대로 재사용).
@@ -12,7 +13,7 @@ export default function SettingsPage() {
   const [loaded, setLoaded] = useState(false);
   const [setup, setSetup] = useState(null); // 학년·과·학기
   const [eclassConnected, setEclassConnected] = useState(false);
-  const [hideGrad, setHideGrad] = useState(false);
+  const [hiddenKinds, setHiddenKinds] = useState([]); // 숨긴 일정 종류 key 목록
   const { session, profile, loading: authLoading } = useAuth();
 
   const [setupOpen, setSetupOpen] = useState(false);
@@ -23,7 +24,7 @@ export default function SettingsPage() {
   useEffect(() => {
     setSetup(loadTimetableSetup());
     setEclassConnected(Boolean(localStorage.getItem("eclassCalUrl")));
-    setHideGrad(localStorage.getItem("hideGrad") === "1");
+    setHiddenKinds(loadHiddenKinds());
     setLoaded(true);
   }, []);
 
@@ -39,9 +40,13 @@ export default function SettingsPage() {
     setSetup(s);
     setSetupOpen(false);
   }
-  function toggleHideGrad(checked) {
-    setHideGrad(checked);
-    localStorage.setItem("hideGrad", checked ? "1" : "0");
+  // 종류별 표시 토글: 체크하면 그 종류를 캘린더에서 숨긴다(일정 자체는 지우지 않음).
+  function toggleKindHidden(key, hide) {
+    setHiddenKinds((prev) => {
+      const next = hide ? [...new Set([...prev, key])] : prev.filter((k) => k !== key);
+      saveHiddenKinds(next);
+      return next;
+    });
   }
 
   if (!loaded) return null;
@@ -117,18 +122,23 @@ export default function SettingsPage() {
         </Link>
       </section>
 
-      {/* 캘린더 표시 */}
+      {/* 캘린더 표시 — 종류별로 숨길 수 있음 (일정 삭제 아님) */}
       <section className="rounded-2xl bg-white p-4 shadow-sm">
-        <p className="mb-2 text-xs font-bold text-[#0c4470]/40">캘린더 표시</p>
-        <label className="flex items-center justify-between">
-          <span className="text-sm font-medium text-[#0c4470]">대학원 일정 숨기기</span>
-          <input
-            type="checkbox"
-            checked={hideGrad}
-            onChange={(e) => toggleHideGrad(e.target.checked)}
-            className="h-5 w-5 accent-[#0095da]"
-          />
-        </label>
+        <p className="mb-1 text-xs font-bold text-[#0c4470]/40">캘린더 표시</p>
+        <p className="mb-2.5 text-[11px] text-[#0c4470]/40">숨겨도 일정이 지워지진 않고, 캘린더에서만 안 보여요.</p>
+        <div className="flex flex-col gap-2.5">
+          {CALENDAR_KINDS.map((kind) => (
+            <label key={kind.key} className="flex items-center justify-between">
+              <span className="text-sm font-medium text-[#0c4470]">{kind.label} 숨기기</span>
+              <input
+                type="checkbox"
+                checked={hiddenKinds.includes(kind.key)}
+                onChange={(e) => toggleKindHidden(kind.key, e.target.checked)}
+                className="h-5 w-5 accent-[#0095da]"
+              />
+            </label>
+          ))}
+        </div>
       </section>
 
       <p className="text-center text-[11px] text-[#0c4470]/30">앞으로 추가되는 설정도 여기 모아둘게요</p>

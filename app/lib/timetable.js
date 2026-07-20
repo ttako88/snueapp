@@ -252,6 +252,54 @@ export function groupCourses(list) {
   }));
 }
 
+// ── 강의 추가 시트용: 성격별 분류 + 과목명 기준 묶기 ──
+// 사용자 리포트(2026-07-20): 택1 그룹을 한 줄로 접으면 안에 뭐가 있는지 안 보이고("7개중택1만 뜸"),
+// 교양이 성격별로 안 나뉘어 찾기 어려움 → 과목명별 낱개 노출(분반만 접기) + 성격 헤더로 해결.
+export const COURSE_CATEGORY_ORDER = ["전공", "심화", "교직", "핵심교양", "중점교양", "자율교양", "교양"];
+// 단독필수 교양 3종의 공식 성격 (2026 요람: 수업영어실습=핵심 교육영어,
+// 한국의역사와문화=중점 역사와사회, 현대수학의기초=중점 수학의세계)
+const GY_STANDALONE_CAT = {
+  수업영어실습: "핵심교양",
+  한국의역사와문화: "중점교양",
+  현대수학의기초: "중점교양",
+};
+export function categoryOf(c) {
+  if (c.type !== "교양") return c.type; // 전공/심화/교직
+  if (c.groupLabel) return c.groupLabel.split(" · ")[0]; // "핵심교양/중점교양/자율교양"
+  return GY_STANDALONE_CAT[c.name] || "교양";
+}
+
+// 과목명 기준으로만 묶어 성격별 섹션으로 반환. 택1 요건은 없애는 게 아니라
+// 각 과목 줄의 reqLabel(요건 안내 문구)로 계속 보여준다.
+// 반환: [{ cat, groups: [{ key, label(=과목명), members(분반들), isMulti, reqLabel }] }]
+export function groupCoursesByName(list) {
+  const map = new Map();
+  for (const c of list) {
+    const k = `${categoryOf(c)}|${c.name}`;
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(c);
+  }
+  const byCat = new Map();
+  for (const [k, members] of map) {
+    const cat = k.split("|")[0];
+    if (!byCat.has(cat)) byCat.set(cat, []);
+    byCat.get(cat).push({
+      key: k,
+      label: members[0].name,
+      members,
+      isMulti: members.length > 1,
+      reqLabel: members[0].groupLabel || null,
+    });
+  }
+  const order = (cat) => {
+    const i = COURSE_CATEGORY_ORDER.indexOf(cat);
+    return i === -1 ? COURSE_CATEGORY_ORDER.length : i;
+  };
+  return [...byCat.entries()]
+    .sort((a, b) => order(a[0]) - order(b[0]))
+    .map(([cat, groups]) => ({ cat, groups }));
+}
+
 // 과목명 → 파스텔 색 (이름 해시로 안정적 배정)
 const PALETTE = [
   { bg: "#e3eefb", bar: "#4b86c7" },

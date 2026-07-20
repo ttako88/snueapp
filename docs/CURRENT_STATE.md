@@ -1,6 +1,14 @@
 # 현재 상태 (AI 협업 진입 문서)
 
-> 갱신: 2026-07-20 야간 (Gate 3 완료·Gate 4a 준비). 새 세션은 이 문서 → 필요시 감사 보고서 순서로 읽을 것.
+> 갱신: 2026-07-20 (Gate 4a DB+서버부 동결·GitHub 비운영 푸시 완료·운영배포 승인 대기).
+> 새 세션/컨텍스트 압축 후: 이 문서 → [reviews/GATE4A_LEDGER.md](reviews/GATE4A_LEDGER.md) → [GPT_CLAUDE_WORKFLOW.md](GPT_CLAUDE_WORKFLOW.md) 순으로 읽고 이어서 진행.
+
+## ★ 재개 앵커 (2026-07-20 현재)
+- **동결 SHA**: Gate 4a DB(001~008) = `6746127` (dev clean replay 66/66). 서버부(009 RPC+maintenance 코드+테스트) = `cc8b43b` (dev 적용·통합 8/8·행동 6+2 PASS, 009 원문 SHA-256 `faff5f85…`).
+- **GitHub**: 비운영 브랜치 `integration/gate4a-preproduction` 푸시 완료(HEAD `58f0456`). 원격 main=`cb3e7ab` 그대로. Production 무배포.
+- **다음 = 사용자 최종 운영 배포 컨펌 대기.** 진행 가능(무위험): Vercel Preview 확인·UI 4기능 원격검증·배포전 체크리스트·AI playbook. BLOCKED: Route↔dev service_role HTTP E2E(안전 dev secret 준비까지).
+- **운영 금지선(사용자 명시 승인 전 절대 금지)**: main 병합, Vercel Production 배포·승격, 운영 Supabase 001~009 적용, 운영 Cron/env/OAuth 활성화, 운영 service_role/env 등록, 실사용자 데이터 초기화.
+- 협업 규약·안전규칙 상세: [GPT_CLAUDE_WORKFLOW.md](GPT_CLAUDE_WORKFLOW.md).
 
 ## 문서 신뢰 우선순위
 

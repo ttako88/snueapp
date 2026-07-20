@@ -62,11 +62,47 @@ create table if not exists private.course_review_actor_aliases (
   subject_id  bigint not null references private.course_review_subjects (id) on delete cascade,
   member_id   uuid references private.members (id) on delete set null,
   created_at  timestamptz not null default now(),
-  detached_at timestamptz
+  detached_at timestamptz,
+  -- 별칭이 어느 과목 것인지를 복합 FK로 못 박기 위한 대상 (REQUIRED-010-2)
+  unique (id, subject_id)
 );
 -- 한 과목에서 한 회원은 별칭 1개 (탈퇴로 member_id가 비면 유니크 대상에서 빠진다)
 create unique index if not exists course_review_actor_aliases_one
   on private.course_review_actor_aliases (subject_id, member_id) where member_id is not null;
+
+-- 별칭 불변조건 (REQUIRED-010-3)
+--  · 최초 INSERT에는 member_id가 반드시 있어야 한다. 처음부터 주인 없는 별칭을
+--    만들 수 있으면 definer 함수 결함 하나로 **가짜 작성자 수를 늘려** k=10 게이트를
+--    통과시킬 수 있다.
+--  · 허용되는 UPDATE는 "탈퇴로 인한 member_id non-null → null" 뿐이고,
+--    그때 detached_at을 자동 기록한다. subject_id·id는 불변.
+create or replace function private.guard_actor_alias()
+returns trigger language plpgsql set search_path='' as $$
+begin
+  if tg_op = 'INSERT' then
+    if new.member_id is null then
+      raise exception 'actor alias must be created with a member';
+    end if;
+    return new;
+  end if;
+  if new.id is distinct from old.id or new.subject_id is distinct from old.subject_id then
+    raise exception 'actor alias identity is immutable';
+  end if;
+  if old.member_id is not null and new.member_id is null then
+    if new.detached_at is null then new.detached_at := clock_timestamp(); end if;
+    return new;
+  end if;
+  if new.member_id is distinct from old.member_id then
+    raise exception 'actor alias owner is immutable (only withdrawal may clear it)';
+  end if;
+  return new;
+end $$;
+revoke execute on function private.guard_actor_alias() from public, anon, authenticated;
+
+drop trigger if exists course_review_actor_aliases_guard on private.course_review_actor_aliases;
+create trigger course_review_actor_aliases_guard
+  before insert or update on private.course_review_actor_aliases
+  for each row execute function private.guard_actor_alias();
 
 -- 원문 → canonical 매핑 보존 (표기 흔들림 추적용)
 create table if not exists private.course_review_subject_aliases (
@@ -90,7 +126,9 @@ create table if not exists private.course_reviews (
 
   -- 작성자 별칭(subject 범위 무작위). 서버만 만들고 클라이언트는 만들거나 입력할 수 없으며,
   -- 일반 RPC·로그·오류 응답에 노출하지 않는다. 탈퇴로 member_id가 비어도 distinct 집계는 유지된다.
-  actor_alias_id uuid not null references private.course_review_actor_aliases (id) on delete restrict,
+  -- FK는 아래에서 (actor_alias_id, subject_id) 복합으로 건다 — 단일 FK만 걸면
+  -- 과목 B의 리뷰에 과목 A의 별칭을 넣어도 통과해 과목 간 연결 금지가 깨진다.
+  actor_alias_id uuid not null,
 
   -- ★ 기여(contribution) 식별자 — 최초본과 모든 정정본이 **같은 값**을 공유한다.
   --   보상·도움됨·철회·신고는 리뷰 행 id가 아니라 여기에 귀속시킨다.
@@ -134,7 +172,11 @@ create table if not exists private.course_reviews (
   check (status <> 'published'           or published_at is not null),
   check (status <> 'withdrawn_by_author' or withdrawn_at is not null),
   check (status <> 'published' or body is null or body_reviewed_at is not null),
-  check (supersedes_id is null or supersedes_id <> id)
+  check (supersedes_id is null or supersedes_id <> id),
+
+  -- 별칭은 반드시 **같은 과목**의 것이어야 한다 (REQUIRED-010-2)
+  foreign key (actor_alias_id, subject_id)
+    references private.course_review_actor_aliases (id, subject_id) on delete restrict
 );
 
 -- 활성 슬롯 (REQUIRED-1)
@@ -161,7 +203,7 @@ create table if not exists private.exam_tips (
   subject_id   bigint not null references private.course_review_subjects (id) on delete restrict,
   member_id    uuid   references private.members (id) on delete set null,
   author_withdrawn_at timestamptz,
-  actor_alias_id uuid not null references private.course_review_actor_aliases (id) on delete restrict,
+  actor_alias_id uuid not null,
   contribution_id uuid not null default gen_random_uuid(),
   semester     text   not null check (semester ~ '^[0-9]{4}-[12]$'),
   status       text   not null default 'draft' check (status in (
@@ -179,7 +221,9 @@ create table if not exists private.exam_tips (
   -- REQUIRED-5: scope_note·study_tip도 문제 원문·명예훼손이 들어올 수 있어
   --             강의평 자유서술과 동일하게 사전검토를 강제한다.
   check (status <> 'published' or published_at is not null),
-  check (status <> 'published' or reviewed_at  is not null)
+  check (status <> 'published' or reviewed_at  is not null),
+  foreign key (actor_alias_id, subject_id)
+    references private.course_review_actor_aliases (id, subject_id) on delete restrict
 );
 
 create unique index if not exists exam_tips_one_active
@@ -337,13 +381,15 @@ create table if not exists private.review_unlocks (
 -- 6. RLS — 정책 0개 = definer 외 전면 거부
 -- ------------------------------------------------------------
 alter table private.course_review_subjects        enable row level security;
+alter table private.course_review_actor_aliases   enable row level security;
 alter table private.course_review_subject_aliases enable row level security;
 alter table private.course_reviews                enable row level security;
 alter table private.exam_tips                     enable row level security;
 alter table private.ticket_ledger                 enable row level security;
 alter table private.review_unlocks                enable row level security;
 
-revoke all on private.course_review_subjects, private.course_review_subject_aliases,
+revoke all on private.course_review_subjects, private.course_review_actor_aliases,
+              private.course_review_subject_aliases,
               private.course_reviews, private.exam_tips,
               private.ticket_ledger, private.review_unlocks
   from anon, authenticated;

@@ -49,7 +49,17 @@ async function main() {
       values (9001,'초등도덕교육론','김교수','초등도덕교육론','김교수'),
              (9002,'초등수학교육의이해','박교수','초등수학교육의 이해','박교수')`);
 
-    // subject 범위 별칭 (member 연결은 선택)
+    // 합성 회원 생성 (별칭은 반드시 주인이 있어야 하므로 통계 테스트용으로 필요)
+    let memberSeq = 0;
+    const mkMember = async (tag) => {
+      const id = `00000000-0000-0000-0000-1000000${String(++memberSeq).padStart(5, "0")}`;
+      await client.query(`insert into auth.users (id,instance_id,aud,role,email) values
+        ('${id}','00000000-0000-0000-0000-000000000000','authenticated','authenticated','${tag}010@example.invalid')`);
+      await client.query(`update private.members set nickname='${tag}', verification_status='verified' where id='${id}'`);
+      return id;
+    };
+
+    // subject 범위 별칭 (주인 필수)
     const alias = async (subjectId, memberId) => {
       const { rows: [a] } = await client.query(
         `insert into private.course_review_actor_aliases (subject_id, member_id)
@@ -62,9 +72,32 @@ async function main() {
       (id, subject_id, member_id, actor_alias_id, semester, status, grading)
       values (${id}, 9001, ${A}, ${AL1}, '2025-1', '${st}', '보통')`;
 
-    // ── 별칭 규칙 ──
+    // ── 별칭 규칙 (REQUIRED-010-1~3) ──
     await mustFail("한 과목에서 같은 회원의 별칭 2개 금지",
       `insert into private.course_review_actor_aliases (subject_id, member_id) values (9001, '${A_UUID}')`);
+    await mustFail("주인 없는 별칭 생성 금지(가짜 작성자 수 방지)",
+      `insert into private.course_review_actor_aliases (subject_id, member_id) values (9001, null)`);
+    await mustFail("별칭의 소유자 변경 금지",
+      `update private.course_review_actor_aliases set member_id='${B_UUID}' where id=${AL1}`);
+    await mustFail("별칭의 과목 변경 금지",
+      `update private.course_review_actor_aliases set subject_id=9002 where id=${AL1}`);
+
+    // 다른 과목의 별칭을 빌려 쓰면 복합 FK가 막아야 한다
+    const alOther = await alias(9002, A_UUID);
+    await mustFail("다른 과목의 별칭으로 리뷰 작성 금지(과목 간 연결 차단)",
+      `insert into private.course_reviews (subject_id,member_id,actor_alias_id,semester,status,grading)
+       values (9001,${A},${alOther},'2025-1','draft','보통')`);
+
+    // 격리: anon/authenticated는 별칭 테이블에 직접 접근할 수 없어야 한다
+    const { rows: [priv] } = await client.query(`
+      select coalesce(sum(case when has_table_privilege(r, 'private.course_review_actor_aliases', p)
+                               then 1 else 0 end), 0)::int n
+        from unnest(array['anon','authenticated']) r,
+             unnest(array['select','insert','update','delete']) p`);
+    const { rows: [rls] } = await client.query(
+      `select relrowsecurity from pg_class where oid='private.course_review_actor_aliases'::regclass`);
+    rec("별칭 테이블 RLS 활성 + anon/authenticated 권한 0",
+      rls.relrowsecurity === true && priv.n === 0, `rls=${rls.relrowsecurity} 권한=${priv.n}`);
 
     // ── 활성 슬롯 / 정정 체인 ──
     await mustPass("초안 1건 생성", mk(9101, "draft"));
@@ -82,7 +115,7 @@ async function main() {
     await client.query(`update private.course_reviews set status='published' where id=9103`);
 
     // ── 사전검토 강제 ──
-    const AL_B = await alias(9001, null);
+    const AL_B = await alias(9001, B_UUID);
     await mustFail("자유서술이 사전검토 없이 공개 불가",
       `insert into private.course_reviews (id,subject_id,member_id,actor_alias_id,semester,status,body,published_at)
        values (9106,9001,${A},${AL_B},'2025-2','published','좋은 수업',now())`);
@@ -134,7 +167,7 @@ async function main() {
        values (${A},20,'clawback',${rv.id},'rev-of-rev')`);
 
     // ── 통계: 표본은 '서로 다른 작성자' ──
-    const ALS = await alias(9002, A_UUID);
+    const ALS = alOther;  // 위에서 만든 9002·A의 별칭 재사용 (한 과목 한 회원 1개)
     for (let i = 0; i < 10; i++) {
       const sem = `20${20 + Math.floor(i / 2)}-${(i % 2) + 1}`;
       await client.query(`insert into private.course_reviews
@@ -147,7 +180,7 @@ async function main() {
 
     // ★ 실제 9→10 경계 (GPT 요구): 8명 추가 → 9명(full 아님), 1명 더 → 10명(full)
     for (let i = 1; i <= 8; i++) {
-      const al = await alias(9002, null);
+      const al = await alias(9002, await mkMember(`s${i}`));
       await client.query(`insert into private.course_reviews
         (subject_id,actor_alias_id,semester,status,grading,published_at)
         values (9002,${al},'2025-1','published','보통',now())`);
@@ -156,7 +189,7 @@ async function main() {
     rec("작성자 9명에서는 full 아님", st9.n_reviewers === 9 && st9.disclosure !== "full",
       `n=${st9.n_reviewers} ${st9.disclosure}`);
 
-    const al10 = await alias(9002, null);
+    const al10 = await alias(9002, await mkMember("s10"));
     await client.query(`insert into private.course_reviews
       (subject_id,actor_alias_id,semester,status,grading,published_at)
       values (9002,${al10},'2025-1','published','보통',now())`);
@@ -201,7 +234,7 @@ async function main() {
     rec("원장 키에 회원 UUID 미잔존", leak.n === 0, `${leak.n}건`);
 
     // ── 본문 위생 ──
-    const alC = await alias(9001, null);
+    const alC = AL_B;
     await mustFail("공백만 있는 본문 거부",
       `insert into private.course_reviews (id,subject_id,actor_alias_id,semester,status,body)
        values (9107,9001,${alC},'2025-1','draft','   ')`);

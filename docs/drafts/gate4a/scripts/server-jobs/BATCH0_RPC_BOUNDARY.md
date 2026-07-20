@@ -49,14 +49,23 @@
 |---|---|---|
 | batch_runs 기록 | ● 009 | `record_maintenance_run(job, ok, processed, error_code)` (private.record_batch_run 래핑) |
 
-## 009 미결 질문 (GPT 판정 요청 — 009 파일 말미 Q1~Q5와 동일)
-- Q1. `policy_settings`에 `verification_doc_retention_days` 키 부재 → C-2 purge_after 계산용 seed 추가 여부.
-- Q2. stale-reviews owner 경고 수신자 = role='owner' 1인 고정(1인 운영). operator 포함 여부.
-- Q3. operational_messages.kind는 'system' 재사용(동결 CHECK에 전용 kind 추가 회피). 적절한지.
-- Q4. delete-accounts 재개(deleting) 시 prepare의 case_snapshots 재삽입 중복 가능성 → 멱등 보강 필요 여부.
-- Q5. claim_accounts_for_deletion이 '자발 탈퇴 요청'을 포착 못함(members에 withdrawal 신호 부재) — v1 탈퇴 경로 설계 시 조건 추가.
+## 신규 public service_role RPC = **10종** (GPT B-1 집계 정정 — 이전 "12종"은 오기)
+- 공통 1 / purge 3 / expire 1 / stale 2 / delete 3 = 10.
+- (+ `private.prepare_account_deletion` 멱등 보강은 기존 함수 CREATE OR REPLACE — 신규 public 아님.)
 
-## 다음
-- 이 표 + `009_server_job_rpcs.sql` 초안을 GPT 배치 검수 요청.
-- 검수 통과 후: Batch 1(Route·공통 보안 기반) 서버 코드 착수 → 검수 → Batch 2A/2B 잡 → Batch 3 통합.
-- 009는 GPT 승인 후에만 dev 리허설·재동결. 그 전까지 원격 무접촉.
+## path·member UUID 반환 경계 (GPT B-3 정정)
+- **허용**: service_role RPC가 서버 모듈로 storage_path·member UUID 반환(= Storage remove·Auth Admin delete에 필수).
+- **금지**: HTTP 응답 / 일반 앱 로그 / batch_runs·audit 평문 target / 클라이언트 반환.
+
+## GPT 판정 반영 (Q1~Q5)
+- Q1. `verification_doc_retention_days` **추가 안 함**. 파기 기준은 행별 `purge_after`(claim은 `purge_after <= now()`만 판정, 재계산 없음). expire_unreviewed가 전이 시 `purge_after = now()+7d` 확정. `purge_after IS NULL`은 자동파기 제외·이상상태 점검 대상.
+- Q2. 경고 수신자 = **operator+owner** (verified·sanction none). `owner_warned_3_at/7_at`는 "운영진 경고 발송 완료" 의미(레거시 명칭). 발송+표식 한 트랜잭션.
+- Q3. `operational_messages.kind` = **'system' 재사용 승인**('warning'은 회원 모더레이션용이라 부적합, 동결 CHECK 미변경).
+- Q4. **009에서 `prepare_account_deletion` 멱등 보강**: 이미 deleting이면 hold/snapshot 재삽입 없이 정상 반환(최초 진입 시에만 전이·hold·snapshot). post-freeze CREATE OR REPLACE로 허용(001~008 수정 아님).
+- Q5. **현재 범위 승인**. 자발 탈퇴 접수 UI/RPC는 **DEFERRED**(009 말미·문서에 명시). 향후 자발 탈퇴 RPC가 prepare를 호출해 deleting을 만들면 Cron이 재개. withdrawal 컬럼 지금 미추가.
+
+## 다음 (GPT D)
+- 수정된 009 + 본 표는 DRAFT·원격 미적용 유지.
+- **Batch 1(Route·공통 보안 기반) 병행 착수 허용** — dependency injection + mock(실제 RPC 성공 불요).
+- Batch 1 검수 요청 시 수정된 009 요약 + Route 테스트 결과 동반 제출.
+- 009 dev 적용·재동결은 Batch 1 코드 검수 뒤 별도 단계.

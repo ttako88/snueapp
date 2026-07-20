@@ -1,0 +1,9 @@
+{
+  "_comment": "DRAFT 예시 — 실제 vercel.json은 수정하지 않았다. P2 승인 후 수동 반영. CRON_SECRET은 Vercel env로만.",
+  "crons": [
+    { "path": "/api/maintenance?job=purge-verification-docs", "schedule": "0 19 * * *" },
+    { "path": "/api/maintenance?job=delete-accounts",         "schedule": "10 19 * * *" },
+    { "path": "/api/maintenance?job=expire-uploads",          "schedule": "20 19 * * *" },
+    { "path": "/api/maintenance?job=stale-reviews",           "schedule": "30 19 * * *" }
+  ]
+}

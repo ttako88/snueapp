@@ -14,9 +14,20 @@ import {
   groupCourses,
   loadTimetableSetup,
   loadSemesterCourses,
+  saveSemesterCourses,
   collectTakenBefore,
 } from "../../lib/timetable";
 import { generateTimetables } from "../../lib/wizard";
+import { cleanProfessors } from "../../lib/courseSearch";
+import {
+  loadWishlist,
+  saveWishlist,
+  buildEntry,
+  addEntry,
+  removeEntry,
+  entriesForSemester,
+  WISHLIST_MAX,
+} from "../../lib/wishlist";
 
 const GRADES = [1, 2, 3, 4];
 const DEPT_FILTERS = ["전체", "공통", ...DEPARTMENTS.map((d) => d.name)];
@@ -110,20 +121,29 @@ export default function WizardPage() {
     setStep(5);
   }
 
-  function applyResult() {
-    const combo = genResult.results[resultIdx];
-    // 필수 그룹에서 고른 과목은 combo.courses에 있고, 단일 필수는 requiredFixed에 있음
-    const merged = [...base, ...(genResult.requiredFixed || []), ...combo.courses];
+  // 강의 목록을 내 시간표(그 학기)에 실제로 반영한다.
+  // ⚠️ 예전에는 구키 "ttCourses"에만 직접 썼는데, 시간표 화면은 신형 저장소
+  //    (ttSemesters)만 읽는다. ttSemesters가 한 번이라도 만들어진 뒤에는
+  //    구키에 써도 readSemStore가 조기 반환해 무시되므로 "적용했어요" 알림만
+  //    뜨고 실제로는 아무 일도 일어나지 않았다(무성 실패). 2026-07-21 실측 확인.
+  //    → saveSemesterCourses를 쓰면 신형에 저장하고 현재 학기면 구키도 함께 동기화한다.
+  function applyCourses(courses) {
     const seen = new Set();
-    const dedup = merged.filter((c) => {
+    const dedup = courses.filter((c) => {
       const k = courseId(c);
       if (seen.has(k)) return false;
       seen.add(k);
       return true;
     });
-    localStorage.setItem("ttCourses", JSON.stringify(dedup));
+    saveSemesterCourses(semester, dedup);
     alert("내 시간표에 적용했어요!");
     router.push("/courses");
+  }
+
+  function applyResult() {
+    const combo = genResult.results[resultIdx];
+    // 필수 그룹에서 고른 과목은 combo.courses에 있고, 단일 필수는 requiredFixed에 있음
+    applyCourses([...base, ...(genResult.requiredFixed || []), ...combo.courses]);
   }
 
   if (!loaded) return null;
@@ -302,7 +322,11 @@ export default function WizardPage() {
       )}
 
       {/* ===== STEP 5: 결과 ===== */}
-      {step === 5 && genResult && <ResultsView {...{ genResult, resultIdx, setResultIdx, base, required, axis, setAxis, applyResult, setStep }} />}
+      {step === 5 && genResult && (
+        <ResultsView
+          {...{ genResult, resultIdx, setResultIdx, base, required, axis, setAxis, applyResult, setStep, semester, applyCourses }}
+        />
+      )}
 
       {/* 하단 이동 버튼 */}
       {step <= 4 && (
@@ -667,7 +691,40 @@ function AddSheet({ mode, excludeIds, taken, semester, onAdd, onClose }) {
 }
 
 /* ---------- 결과 넘겨보기 ---------- */
-function ResultsView({ genResult, resultIdx, setResultIdx, base, required, axis, setAxis, applyResult, setStep }) {
+function ResultsView({ genResult, resultIdx, setResultIdx, base, required, axis, setAxis, applyResult, setStep, semester, applyCourses }) {
+  const [wishlist, setWishlist] = useState([]);
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    setWishlist(loadWishlist());
+  }, []);
+
+  function persist(list) {
+    setWishlist(list);
+    saveWishlist(list);
+  }
+
+  function addCurrentToWishlist() {
+    const combo = genResult.results[resultIdx];
+    const courses = [...base, ...(genResult.requiredFixed || []), ...combo.courses];
+    const entry = buildEntry(semester, courses, {
+      label: `조합 ${resultIdx + 1}`,
+      totalCredits: combo.totalCredits,
+    });
+    const r = addEntry(wishlist, entry);
+    if (r.ok) {
+      persist(r.list);
+      setNotice("장바구니에 담았어요!");
+    } else if (r.reason === "duplicate") {
+      setNotice("이미 담아둔 조합이에요.");
+    } else {
+      setNotice(`장바구니가 가득 찼어요 (최대 ${WISHLIST_MAX}개). 안 쓰는 걸 지워주세요.`);
+    }
+    setTimeout(() => setNotice(""), 2500);
+  }
+
+  const saved = entriesForSemester(wishlist, semester);
+
   if (genResult.infeasible) {
     return (
       <section className="rounded-2xl bg-[#fdecec] p-4 text-center">
@@ -734,14 +791,75 @@ function ResultsView({ genResult, resultIdx, setResultIdx, base, required, axis,
       <TimetableGrid courses={previewCourses} axis={axis} />
 
       {combo.courses.length > 0 && (
-        <ul className="flex flex-col gap-1">
+        <ul className="flex flex-col gap-1.5">
           {combo.courses.map((c) => (
-            <li key={courseId(c)} className="flex items-center gap-2 text-xs text-[#0c4470]/70">
-              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: colorFor(c.name).bar }} />
-              {c.name}{c.section ? `(${c.section})` : ""} · {c.day}{c.periods.join("")}교시
+            <li key={courseId(c)} className="flex items-start gap-2 text-xs text-[#0c4470]/70">
+              <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: colorFor(c.name).bar }} />
+              <span className="min-w-0 flex-1">
+                <span className="block font-medium text-[#0c4470]">
+                  {c.name}
+                  {c.section ? `(${c.section})` : ""}
+                </span>
+                {/* 어떤 교수 수업인지가 조합 고를 때 핵심 정보 — 2026-07-21 요청 반영 */}
+                <span className="block text-[11px] text-[#0c4470]/45">
+                  {cleanProfessors(c.professor).join(", ") || "교수 미정"} · {c.day}
+                  {c.periods.join("")}교시
+                  {c.room ? ` · ${c.room}` : ""}
+                </span>
+              </span>
             </li>
           ))}
         </ul>
+      )}
+
+      {notice && (
+        <p className="rounded-xl bg-[#eaf6fd] px-3 py-2 text-center text-xs font-bold text-[#0095da]">{notice}</p>
+      )}
+
+      {/* 장바구니 — 수강신청 실패 대비로 예비 시간표를 여러 벌 담아둔다 */}
+      <button
+        onClick={addCurrentToWishlist}
+        className="rounded-xl bg-white py-2.5 text-sm font-bold text-[#0095da] shadow-sm active:bg-[#eaf6fd]"
+      >
+        🔖 이 조합 장바구니에 담기
+      </button>
+
+      {saved.length > 0 && (
+        <section className="rounded-2xl bg-white p-3.5 shadow-sm">
+          <p className="mb-2 text-xs font-bold text-[#0c4470]">
+            담아둔 시간표 <span className="text-[#0c4470]/40">({saved.length}/{WISHLIST_MAX})</span>
+          </p>
+          <ul className="flex flex-col gap-1.5">
+            {saved.map((e) => (
+              <li key={e.id} className="flex items-center gap-2 rounded-xl bg-[#f7fbfe] p-2.5">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-bold text-[#0c4470]">
+                    {e.label || "담아둔 조합"}
+                    {/* 구분자 없이 붙이면 "조합 1"+"6학점"이 "조합 16학점"으로 읽힌다 */}
+                    {e.totalCredits != null && (
+                      <span className="ml-1 font-medium text-[#0c4470]/45">· {e.totalCredits}학점</span>
+                    )}
+                  </span>
+                  <span className="block truncate text-[11px] text-[#0c4470]/40">
+                    {e.courses.map((c) => c.name).join(", ")}
+                  </span>
+                </span>
+                <button
+                  onClick={() => applyCourses(e.courses)}
+                  className="shrink-0 rounded-lg bg-[#0095da] px-2.5 py-1.5 text-[11px] font-bold text-white active:opacity-80"
+                >
+                  적용
+                </button>
+                <button
+                  onClick={() => persist(removeEntry(wishlist, e.id))}
+                  className="shrink-0 rounded-lg bg-black/5 px-2 py-1.5 text-[11px] text-[#0c4470]/50"
+                >
+                  삭제
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       <div className="flex gap-2">

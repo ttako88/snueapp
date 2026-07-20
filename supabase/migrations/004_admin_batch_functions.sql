@@ -110,13 +110,24 @@ begin
     if v_case.target_type = 'post' then
       update public.posts set hidden_at = now() where id = v_case.target_id and hidden_at is null;
     else
+      -- 댓글 hide가 실제 전이(hidden_at NULL→NOT NULL)일 때만 부모 comment_count 1회 감소 (GPT: 공개 댓글 수)
       update public.comments set hidden_at = now() where id = v_case.target_id and hidden_at is null;
+      if found then
+        update public.posts set comment_count = greatest(comment_count - 1, 0)
+          where id = (select post_id from public.comments where id = v_case.target_id);
+      end if;
     end if;
   elsif p_action = 'restore' then
     if v_case.target_type = 'post' then
       update public.posts set hidden_at = null where id = v_case.target_id;
     else
-      update public.comments set hidden_at = null where id = v_case.target_id;
+      -- 실제 복구 전이(NOT NULL→NULL)이고 삭제되지 않은 댓글만 comment_count 1회 증가
+      update public.comments set hidden_at = null
+        where id = v_case.target_id and hidden_at is not null and deleted_at is null;
+      if found then
+        update public.posts set comment_count = comment_count + 1
+          where id = (select post_id from public.comments where id = v_case.target_id);
+      end if;
     end if;
   elsif p_action = 'warn' then
     insert into public.operational_messages (member_id, kind, title, body)

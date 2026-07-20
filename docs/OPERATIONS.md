@@ -2,22 +2,28 @@
 
 > 갱신: 2026-07-20 (Gate 2)
 
-## 1. 환경 구분
+## 1. 환경 구분 (P0-9 개정: 로컬·Preview 기본 = dev)
 
 | 환경 | Supabase | 키 위치 |
 |---|---|---|
-| 로컬 개발 | 기본은 운영을 바라봄 (읽기 위주 개발 시) | `.env.local` |
-| 로컬 dev 실험 | snueapp-dev (`uiikgqeoxocpvphlmoqp`) | `.env.dev.local`에 보관 |
-| 배포 | 운영 (`jclwkvxbvsegmbcnptpi`) | Vercel → Settings → Environment Variables |
+| **로컬 개발 (기본)** | **snueapp-dev (`uiikgqeoxocpvphlmoqp`)** | `.env.local` |
+| Vercel Preview | snueapp-dev (dev 키만 등록 — prod secret 등록 금지) | Vercel → Preview env |
+| Vercel Production | 운영 (`jclwkvxbvsegmbcnptpi`) | Vercel → Production env |
 
-### 로컬을 dev로 전환
+> **왜 바꿨나 (2026-07-20, GPT 런북 P0-9)**: 이제 앱에 쓰기 기능·service 작업이 있어,
+> 로컬 기본이 운영 DB를 바라보면 실수 한 번이 운영 데이터를 오염시킬 수 있다.
+> **운영 연결은 기본값이 아니라 예외(break-glass)다.**
 
-1. `.env.local`의 두 값을 잠시 주석 처리(# 붙이기)하고 `.env.dev.local`의 두 줄을 복사해 넣기
-2. dev 서버 재시작 (Next가 env 변경을 자동 감지하지만, 확실히 하려면 재시작)
-3. 화면 하단 등에서 dev임을 확인하려면: 브라우저 콘솔에서 접속 URL이 `uiikgqeoxocpvphlmoqp`인지 확인
-4. **작업 후 반드시 원복** — 원복 잊으면 게시판이 빈 dev 데이터를 보여줘서 바로 티 남
+### 운영 DB에 로컬로 연결해야 할 때 (break-glass 절차)
 
-규칙: dev에는 테스트 데이터만. 실제 학생증·증명서 파일 업로드 금지. Vercel(배포)은 이 전환의 영향을 받지 않음(자체 env 사용).
+일상 개발에서는 금지. 운영 장애 조사 등 명확한 사유가 있을 때만:
+
+1. 사유·시각을 기록하고 (커밋 메시지나 작업 로그)
+2. `.env.local`의 dev 값을 주석 처리하고 운영 값을 임시로 넣은 뒤
+3. **읽기 전용 작업만** 수행하고
+4. 작업 즉시 dev 값으로 원복 (원복 확인: 브라우저 콘솔 접속 URL이 `uiikgqeoxocpvphlmoqp`인지)
+
+규칙: dev에는 테스트 데이터만. 실제 학생증·증명서 파일 업로드 금지. Vercel(배포)은 로컬 전환의 영향을 받지 않음(자체 env 사용).
 
 ## 2. 백업 (마이그레이션 실행 전 필수)
 

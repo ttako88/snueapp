@@ -1,0 +1,8 @@
+{
+  "crons": [
+    { "path": "/api/maintenance?job=purge-verification-docs", "schedule": "0 19 * * *" },
+    { "path": "/api/maintenance?job=delete-accounts", "schedule": "10 19 * * *" },
+    { "path": "/api/maintenance?job=expire-uploads", "schedule": "20 19 * * *" },
+    { "path": "/api/maintenance?job=stale-reviews", "schedule": "30 19 * * *" }
+  ]
+}

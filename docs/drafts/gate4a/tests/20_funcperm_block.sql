@@ -1,20 +1,30 @@
 -- 그룹 F(함수 권한 격리) + A(차단)
 begin;
 
--- 메타 검증 (postgres role): PUBLIC execute 잔존 0, definer search_path 잠금 전수
--- 예외: private._%(테스트 헬퍼, private 스키마 미노출·anon/authenticated USAGE 없음),
---       rls_%(RLS 자동활성 시스템 트리거 — 이벤트트리거로만 호출).
--- search_path 판정: 빈 경로는 PG가 proconfig에 search_path="" 로 저장하므로
---   @> array['search_path='] (따옴표 없는 정확일치)는 오탐. like 'search_path=%'로 잠금 여부만 확인.
+-- 메타 검증 (postgres role): 앱 소유 함수 PUBLIC execute 잔존 0, definer search_path 정확 잠금 전수.
+-- allowlist는 접두사 패턴이 아니라 "정확한 스키마+함수명"으로 지정(GPT 검수 B): 미래에 같은
+--   접두사를 가진 위험 함수가 검사를 빠져나가지 못하게 함.
+--   · private._assert/_assert_raises/_assert_ok = 테스트 전용 헬퍼(오버로드 없음, production 마이그레이션
+--     산출물에 미포함. private 스키마는 PostgREST 미노출·anon/authenticated USAGE 없음).
+--   · public.rls_auto_enable = Supabase 관리 RLS 자동활성 트리거(무인자, search_path=pg_catalog 정확 허용).
+-- search_path 판정: 빈 경로는 PG가 proconfig에 정확히 search_path="" 로 저장. 앱 definer는 이 값과
+--   정확 일치해야 PASS(단순히 "설정 존재"가 아님 — search_path=public 같은 위험값 차단).
 do $$ declare v int; begin
-  select count(*) into v from information_schema.role_routine_grants
-    where grantee='PUBLIC' and specific_schema in ('public','private','authz')
-      and routine_name not like 'rls\_%' and routine_name not like '\_%';
+  select count(*) into v from information_schema.role_routine_grants g
+    where g.grantee='PUBLIC' and g.specific_schema in ('public','private','authz')
+      and not (
+        (g.specific_schema='private' and g.routine_name in ('_assert','_assert_raises','_assert_ok'))
+        or (g.specific_schema='public' and g.routine_name='rls_auto_enable')
+      );
   perform authz._log('T-F-04-pubexec','F', v=0, 'public_exec='||v);
   select count(*) into v from pg_proc p join pg_namespace n on n.oid=p.pronamespace
     where n.nspname in ('public','private','authz') and p.prosecdef
-      and not exists (select 1 from unnest(coalesce(p.proconfig,array[]::text[])) x
-                      where x like 'search_path=%');
+      and not (
+        p.proconfig @> array['search_path=""']
+        or (n.nspname='public' and p.proname='rls_auto_enable'
+            and pg_get_function_identity_arguments(p.oid)=''
+            and p.proconfig @> array['search_path=pg_catalog'])
+      );
   perform authz._log('T-F-05-searchpath','F', v=0, 'bad_searchpath='||v);
 end $$;
 

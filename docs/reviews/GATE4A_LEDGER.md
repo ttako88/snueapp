@@ -26,29 +26,39 @@
 | 2 | claim_guest_read view_count 컬럼 모호성(42702) | 높음(미리보기 운영 실패) | 003 별칭 p.view_count |
 | 3 | soft delete RLS↔SELECT 가시성 충돌 | **치명(자기 글 삭제 불가)** | 007 definer RPC 전환 + 클라 deleted_at 권한 제거 |
 
-## 3. 테스트 계약 대응 — clean replay 재실행 결과 (2026-07-20)
+## 3. 테스트 계약 대응 — clean replay 재실행 결과 (2026-07-20, GPT 검수 2차 반영)
 
-**클린 리플레이 스키마에서 DB 실측 = 56/56 PASS, FAIL 0** (comment_count 신규 CC 5건 포함). 그룹별:
+**클린 리플레이 스키마에서 DB 실측 = 66/66 PASS, FAIL 0.** 그룹별:
 
 | 그룹 | 결과 | 비고 |
 |---|---|---|
-| M (members 격리) | PASS | private.members 직접접근 차단·get_my_member·닉네임 중복거부 |
-| R (콘텐츠 RLS) | PASS | verified/pending/suspended/banned/write_restricted/anon 컨텍스트별 가시성·수정·삭제 |
-| F (함수 권한 격리) | PASS | 관리함수 authenticated/anon 거부 + **T-F-04/05 메타검증(교정 후)** |
-| A (차단) | PASS | block_author·list_my_blocks·중복차단 조용한 성공·RLS 필터 |
-| V (신원 2단계) | PASS | begin/finalize·동시성 차단·bad hmac·enforcement_hold·7필드 |
-| D (모더레이션) | PASS | 신고→사건→hide/sanction/reveal·self-target 거부·권한분리·audit |
-| P (미리보기) | PASS | claim_guest_read allowed/quota/not_available/ipcap + **T-P-02 재열람 view_count 불변(결함#2 회귀)** |
-| W (탈퇴 §13) | PASS | content-kept·display 대체·owner 제거·**deleted_at 유지(결함#3 회귀)**·deleting 전이 |
-| **CC (comment_count 신규)** | **PASS (5)** | 초기2→soft_delete 1→재삭제 no-op 1→moderate hide 0→restore 1 |
+| M (members 격리) | 3/3 | private.members 직접접근 차단·get_my_member·닉네임 중복거부 |
+| R (콘텐츠 RLS) | 10/10 | verified/pending/suspended/banned/write_restricted/anon 컨텍스트별 가시성·수정·삭제 |
+| F (함수 권한 격리) | 6/6 | 관리함수 authenticated/anon 거부 + **T-F-04/05 메타검증(엄격 교정 후)** |
+| A (차단) | 3/3 | block_author·list_my_blocks·중복차단 조용한 성공·RLS 필터 |
+| V (신원 2단계) | 6/6 | begin/finalize·동시성 차단·bad hmac·enforcement_hold·7필드 |
+| D (모더레이션) | 9/9 | 신고→사건→hide/sanction/reveal·self-target 거부·권한분리·audit |
+| P (미리보기) | 8/8 | claim_guest_read allowed/quota/not_available/ipcap + **T-P-02 재열람 view_count 불변(결함#2 회귀)** |
+| W (탈퇴 §13) | 6/6 | content-kept·display 대체·owner 제거·**deleted_at 유지(결함#3 회귀)**·deleting 전이 |
+| **G (파기·hold·제재만료 배치)** | **6/6** | expire_sanctions(만료 제재 해제)·purge_expired_holds(만료 삭제/미만료 보존)·purge_expired_guest_reads·purge_soft_deleted_content(30일 경과+무사건만 삭제, 최근·열린사건 보존) |
+| **X (maintenance lease)** | **4/4** | acquire·중복획득 차단(already_running)·잘못된 토큰 release no-op·올바른 release 후 재획득 |
+| **CC (comment_count 신규)** | **5/5** | 초기2→soft_delete 1→재삭제 no-op 1→moderate hide 0→restore 1 |
 
-- **T-F-04/T-F-05 테스트 술어 버그 발견·교정**(중요): 원 술어 `proconfig @> array['search_path=']`는 PG가 빈 search_path를 `search_path=""`(따옴표 포함)로 저장하는 사실을 반영 못해 **하드닝된 definer 함수 57개 전부를 오탐**. `like 'search_path=%'`(잠금 여부) + `rls_%`/`_%` 예외(시스템 트리거·private 테스트헬퍼)로 교정. 스키마는 무결(56 함수 `search_path=""`, 1 함수 `search_path=pg_catalog`) — 오탐이었음. 교정 후 F/A 9/9 PASS.
-- comment_count: 이전 DEFERRED(개선) → **CC 그룹 DB 실측으로 PASS 승격**. moderate_content(댓글 hide -1/restore +1) + soft_delete_comment(-1, 재삭제 no-op) 검증.
+- **G/X 그룹은 신규 테스트 파일 `70_batch_lease.sql`로 작성**(기존 커밋 테스트 파일엔 없었음 — GPT 2차 A항 누락 지적 반영). DB 함수부만 검증(서버 Route/Cron HTTP는 DEFERRED).
+- **comment_count: DEFERRED(개선) → PASS 승격**. moderate_content(댓글 hide -1/restore +1) + soft_delete_comment(-1, 재삭제 no-op).
+
+### T-F-04/T-F-05 술어 버그 발견·교정 (GPT 2차 B항 반영, 2단계)
+- **1차 발견**: 원 술어 `proconfig @> array['search_path=']`는 PG가 빈 search_path를 `search_path=""`(따옴표 포함)로 저장하는 사실을 반영 못해 하드닝된 definer 함수 57개 전부를 오탐. 스키마는 무결(56 함수 `search_path=""`, 1 함수 rls_auto_enable `search_path=pg_catalog`)이었음.
+- **2차 교정(GPT 권장 = 최종본)**: 느슨한 `like 'search_path=%'`/접두사 제외 → **정확 일치 기준**으로 강화.
+  - T-F-05: 앱 definer는 `proconfig @> array['search_path=""']`(정확히 빈 경로)만 PASS. `search_path=public` 같은 위험값 차단. rls_auto_enable은 `무인자 + search_path=pg_catalog` 정확 시그니처 allowlist.
+  - T-F-04: 접두사(`rls_%`/`_%`) 대신 **정확한 스키마+함수명 allowlist**(`private._assert/_assert_raises/_assert_ok`, `public.rls_auto_enable`). 미래에 같은 접두사의 위험 함수가 검사를 빠져나가지 못함.
+  - **테스트 전용 헬퍼(`_assert*`)는 production 마이그레이션 산출물에 미포함**(00_fixtures/01 테스트 스캐폴딩에서만 생성). 008의 private 전 함수 일괄 revoke는 유지.
+  - 교정 후 T-F-04/05 = PASS(엄격 기준).
 
 ### 서버부 (여전히 DEFERRED — SQL 동결과 별개)
-- maintenance Route·서버잡 4종(purge-verification-docs·delete-accounts·expire-uploads·stale-reviews) = Vercel Cron Route 미구현. DB 함수(prepare/detach/purge_*)는 PASS.
+- maintenance Route·서버잡 4종(purge-verification-docs·delete-accounts·expire-uploads·stale-reviews) = Vercel Cron Route 미구현. **DB 함수(expire_sanctions/purge_*/prepare/detach)는 G그룹 PASS**.
 - 미리보기 HTTP Route = Gate 5. claim_guest_read 함수부는 PASS.
-- **"전 그룹 완료"가 아니라 "DB 실측 56 PASS + 서버부 DEFERRED"**로 표기 (GPT 5항).
+- **"전 그룹 완료"가 아니라 "DB 실측 66 PASS + 서버부 DEFERRED"**로 표기 (GPT 5항).
 
 ## 4. clean replay 계획 (단계 B 산출물 동결 직전 — GPT 6항)
 

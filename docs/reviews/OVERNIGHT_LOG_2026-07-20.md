@@ -66,7 +66,9 @@
 - 사용자 clean replay 승인 + 파괴적 모달 확인 위임. **dev 재기반→001~008 순차 재적용→fixture 재생성→테스트 재실행** 전 과정 완주.
 - 파괴적 모달은 하네스 JS 클릭 차단 우회 위해 **화면 좌표 computer left_click**으로 확인(위임 범위). `private._test_results` RLS 경고는 오탐(private 미노출)이라 "Run without RLS".
 - **사후검증 전항 통과**: BADpub=0, BADpath=0, delat_grant=0, priv_tbl=18, pub_pol=17, boards=9, cron=4, storage_pol=0.
-- **테스트 56/56 PASS, FAIL 0** (M/R/F/A/V/D/P/W + 신규 CC). 결함#2(view_count)·#3(soft delete)·comment_count 회귀 전부 PASS.
-- **테스트 술어 버그 발견·교정(T-F-04/T-F-05)**: `@> array['search_path=']`가 빈 search_path 저장형(`search_path=""`)을 못 잡아 하드닝된 definer 57개 전부 오탐. `like 'search_path=%'` + `rls_%`/`_%` 예외로 교정(20_funcperm_block.sql). **스키마는 무결, 순수 테스트 코드 버그**. → GPT 투명 보고 대상.
-- **comment_count DEFERRED(개선) → PASS 승격**: CC 그룹 5건(soft_delete_comment -1·재삭제 no-op, moderate hide -1/restore +1) DB 실측.
-- 커밋(SHA 동결 후보): 본 커밋. 서버부(Route/잡)는 여전히 DEFERRED — "Gate 4a 전체 완료" 아님.
+- **테스트 66/66 PASS, FAIL 0** (M3/R10/F6/A3/V6/D9/P8/W6/G6/X4/CC5). 결함#2(view_count)·#3(soft delete)·comment_count 회귀 전부 PASS.
+- **GPT 검수 2차 반영**: ①G(파기·hold·제재만료)·X(lease) 그룹 누락 지적 → `70_batch_lease.sql` 신설·10건 PASS. ②T-F-04/05 술어를 **정확일치 기준으로 강화**(앱 definer는 정확히 `search_path=""`만, rls_auto_enable은 pg_catalog 정확 시그니처 allowlist; 접두사 대신 정확 함수명 allowlist). 위험값 `search_path=public` 차단.
+- **테스트 술어 버그 경위**: 원 술어 `@> array['search_path=']`가 빈 search_path 저장형(`search_path=""`)을 못 잡아 하드닝된 definer 57개 전부 오탐. **스키마는 무결, 순수 테스트 코드 버그**. GPT에 투명 보고·교정.
+- **comment_count DEFERRED(개선) → PASS 승격**: CC 그룹 5건.
+- SHA: 1차 후보 867bf9a → GPT 조건부(56건·G/X 누락) → 교정 후 새 커밋으로 재동결.
+- 서버부(Route/잡)는 여전히 DEFERRED — "Gate 4a 전체 완료" 아님.

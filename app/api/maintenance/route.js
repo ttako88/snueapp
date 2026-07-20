@@ -7,10 +7,13 @@ import { handleMaintenance } from "../../lib/server/maintenance/core.mjs";
 import { createServiceClient } from "../../lib/server/maintenance/serviceClient.mjs";
 import { withLease } from "../../lib/server/maintenance/lease.mjs";
 import { runJob } from "../../lib/server/maintenance/jobs/registry.mjs";
-import { MAX_DURATION_SEC, LEASE_TTL_SEC, BUDGET_MS } from "../../lib/server/maintenance/config.mjs";
+import { LEASE_TTL_SEC, BUDGET_MS } from "../../lib/server/maintenance/config.mjs";
 
+// ⚠️ Next 세그먼트 설정 export는 정적 리터럴이어야 한다(import 상수/계산식 금지 — 빌드 실패).
+//    아래 60은 config.mjs의 MAX_DURATION_SEC과 동일해야 하며, 불변식(LEASE_TTL_SEC>MAX_DURATION_SEC)은
+//    tests/maintenance-lease.test.mjs가 config 값으로 검증한다.
 export const runtime = "nodejs";
-export const maxDuration = MAX_DURATION_SEC;
+export const maxDuration = 60;
 
 export async function GET(request) {
   const authHeader = request.headers.get("authorization");

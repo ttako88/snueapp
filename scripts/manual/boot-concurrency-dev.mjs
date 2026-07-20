@@ -48,33 +48,67 @@ async function run(c, sql) {
   catch (e) { try { await c.query("rollback"); } catch {} return "refused:" + (e.message || "").slice(0, 30); }
 }
 
+const D3 = "00000000-0000-0000-0000-0000000000d3";
+
 async function main() {
   await Promise.all([setup.connect(), c1.connect(), c2.connect()]);
-  // 준비: 기존 owner 제거, 신선 대상 2명 생성(email 인증·닉네임·pending/member/none)
-  await setup.query(`
-    update private.members set role='member' where role='owner';
-    insert into auth.users(id,email,email_confirmed_at) values
-      ('${T1}','fx-cc1@dev.test',now()),('${T2}','fx-cc2@dev.test',now())
-      on conflict (id) do update set email_confirmed_at=now();
-    delete from private.school_identities where member_id in ('${T1}','${T2}');
-    update private.members set nickname='동시성1', verification_status='pending', role='member', sanction='none', sanction_until=null where id='${T1}';
-    update private.members set nickname='동시성2', verification_status='pending', role='member', sanction='none', sanction_until=null where id='${T2}';
-  `);
-  // 동시 실행
-  const [r1, r2] = await Promise.all([run(c1, bootSql(T1, HMAC1)), run(c2, bootSql(T2, HMAC2))]);
-  const owners = (await setup.query("select count(*)::int n, coalesce(string_agg(id::text,','),'')  ids from private.members where role='owner'")).rows[0];
-  const ok = [r1, r2].filter((x) => x === "ok").length;
-  const refused = [r1, r2].filter((x) => x.startsWith("refused")).length;
-  console.log(JSON.stringify({ c1: r1, c2: r2, success: ok, refused, final_owner_count: owners.n }));
-  const pass = ok === 1 && refused === 1 && owners.n === 1;
-  console.log("R2_CONCURRENCY: " + (pass ? "PASS (정확히 1명 성공·1명 거부·owner=1)" : "FAIL"));
-  // 복원: 테스트 대상 제거 + d3 owner 복원(fixture 상태)
-  await setup.query(`
-    delete from auth.users where id in ('${T1}','${T2}');
-    delete from private.audit_logs where reason='concurrency';
-    update private.members set verification_status='verified', role='owner', sanction='none', sanction_until=null where id='00000000-0000-0000-0000-0000000000d3';
-  `);
-  await Promise.all([setup.end(), c1.end(), c2.end()]);
-  process.exit(pass ? 0 : 2);
+  let racePass = false, restoreOk = false, origOwners = [];
+  try {
+    // (1)(2) 사전조건: 시작 owner가 정확히 fixture d3 단독인지 확인 + 원래 owner 집합 저장
+    origOwners = (await setup.query(
+      "select coalesce(array_agg(id::text order by id), '{}') as ids from private.members where role='owner'")).rows[0].ids;
+    if (!(origOwners.length === 1 && origOwners[0] === D3)) {
+      throw new Error("사전조건 위반: 시작 owner가 d3 단독이 아님 — " + JSON.stringify(origOwners) + " (시험 거부)");
+    }
+    // 준비: owner 제거, 신선 대상 2명 생성(email 인증·닉네임·pending/member/none)
+    await setup.query(`
+      update private.members set role='member' where role='owner';
+      insert into auth.users(id,email,email_confirmed_at) values
+        ('${T1}','fx-cc1@dev.test',now()),('${T2}','fx-cc2@dev.test',now())
+        on conflict (id) do update set email_confirmed_at=now();
+      delete from private.school_identities where member_id in ('${T1}','${T2}');
+      update private.members set nickname='동시성1', verification_status='pending', role='member', sanction='none', sanction_until=null where id='${T1}';
+      update private.members set nickname='동시성2', verification_status='pending', role='member', sanction='none', sanction_until=null where id='${T2}';
+    `);
+    // (3) 동시 실행
+    const [r1, r2] = await Promise.all([run(c1, bootSql(T1, HMAC1)), run(c2, bootSql(T2, HMAC2))]);
+    const owners = (await setup.query("select count(*)::int n from private.members where role='owner'")).rows[0];
+    const ok = [r1, r2].filter((x) => x === "ok").length;
+    const refused = [r1, r2].filter((x) => x.startsWith("refused")).length;
+    console.log(JSON.stringify({ c1: r1, c2: r2, success: ok, refused, final_owner_count: owners.n }));
+    racePass = ok === 1 && refused === 1 && owners.n === 1;
+  } finally {
+    // (4) 성공·실패 무관하게 T1/T2 제거 + 원래 owner 복원
+    try {
+      await setup.query(`
+        delete from auth.users where id in ('${T1}','${T2}');
+        delete from private.audit_logs where reason='concurrency';
+        update private.members set role='member' where role='owner';
+      `);
+      if (origOwners.length) {
+        const ids = origOwners.map((x) => `'${x}'`).join(",");
+        await setup.query(`update private.members
+          set verification_status='verified', role='owner', sanction='none', sanction_until=null
+          where id in (${ids});`);
+      }
+      // (5) 복원 검증: T1/T2 부재 + owner가 원래 집합과 정확히 일치
+      const chk = (await setup.query(`
+        select (select count(*) from auth.users where id in ('${T1}','${T2}'))::int as t_left,
+               coalesce(array_agg(id::text order by id) filter (where role='owner'), '{}') as owners
+        from private.members`)).rows[0];
+      restoreOk = chk.t_left === 0
+        && chk.owners.length === origOwners.length
+        && chk.owners.every((x, i) => x === origOwners[i]);
+      if (!restoreOk) console.error("[restore-verify-fail] " + JSON.stringify(chk));
+    } catch (e) {
+      restoreOk = false;
+      console.error("[restore-fail] " + (e.message || e));
+    }
+    await Promise.allSettled([setup.end(), c1.end(), c2.end()]);
+  }
+  // (6) 복원 실패는 성공 결과보다 우선하여 exit 2
+  if (!restoreOk) { console.log("R2: RESTORE_FAILED (복원 실패 우선)"); process.exit(2); }
+  console.log("R2_CONCURRENCY: " + (racePass ? "PASS (정확히 1명 성공·1명 거부·owner=1, 복원 OK)" : "FAIL"));
+  process.exit(racePass ? 0 : 3);
 }
 main().catch((e) => { console.error("[fail] " + (e.message || e)); process.exit(1); });

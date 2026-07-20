@@ -4,9 +4,19 @@
 -- CC 전용 격리 회원(e1·e2·e3)을 생성해 다른 테스트의 차단·제재 상태와 완전 분리.
 begin;
 
--- 재실행 정리
+-- 재실행 정리 (R1-1: FK 안전 순서 — case 하위부터 → case → 콘텐츠). 자기완결·재실행 가능.
+delete from private.moderation_actions where case_id in
+  (select id from private.moderation_cases where target_type='comment'
+     and target_id in (select id from public.comments where body like 'CCC%'));
+delete from private.reports where case_id in
+  (select id from private.moderation_cases where target_type='comment'
+     and target_id in (select id from public.comments where body like 'CCC%'));
+delete from private.case_snapshots where case_id in
+  (select id from private.moderation_cases where target_type='comment'
+     and target_id in (select id from public.comments where body like 'CCC%'));
 delete from private.moderation_cases where target_type='comment'
   and target_id in (select id from public.comments where body like 'CCC%');
+delete from private.audit_logs where reason in ('cc숨김','cc복구','cc신고');
 delete from public.comments where body like 'CCC%';
 delete from public.posts where title='CCP1';
 
@@ -51,11 +61,10 @@ select private._assert('T-CC-02-softdel-dec','CC','count=1',
   (select comment_count=1 from public.posts where title='CCP1'),
   (select 'cc='||comment_count from public.posts where title='CCP1'));
 
--- CC-3: 재삭제 no-op → 여전히 1
+-- CC-3: 재삭제 no-op → 예외 없이 정상 반환(계약: 이미 삭제된 건 조용히 no-op) + count 불변
 set local role authenticated;
 select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-0000000000e2","role":"authenticated"}',true);
-do $$ begin perform public.soft_delete_comment((select id from public.comments where body='CCC1'));
-      exception when others then null; end $$;
+select public.soft_delete_comment((select id from public.comments where body='CCC1'));  -- 예외 삼키지 않음(R1-2)
 reset role;
 select private._assert('T-CC-03-redelete-noop','CC','count=1',
   (select comment_count=1 from public.posts where title='CCP1'),

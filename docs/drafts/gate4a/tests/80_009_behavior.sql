@@ -135,6 +135,25 @@ begin
   select verification_status into v_st from private.members where id='0f000000-0000-0000-0000-000000000062';
   if v_st = 'deleting' then raise exception 'B6 rejected prepare must not leave deleting'; end if;
 
+  -- ============ 5b. convergence auth-only (AND 검증 — 잘못된 OR 걸러냄) ============
+  -- e1: auth.users 잔존 + members 행만 삭제 → converged=false여야 함.
+  insert into auth.users(id,email) values ('0f000000-0000-0000-0000-0000000000e1','b-e1@dev.test') on conflict (id) do nothing;
+  delete from private.members where id='0f000000-0000-0000-0000-0000000000e1';
+  if public.account_deletion_converged('0f000000-0000-0000-0000-0000000000e1') <> false then raise exception 'B5b auth-only should be false (AND not OR)'; end if;
+  -- (auth 부재+member 존재는 FK cascade상 정상 생성 불가 → 구조 증명으로 대체, 미시험)
+
+  -- ============ 6b. prepare_account_deletion 재호출 멱등 (hold/snapshot 중복 없음) ============
+  insert into auth.users(id,email) values ('0f000000-0000-0000-0000-0000000000e2','b-e2@dev.test') on conflict (id) do nothing;
+  update private.members set sanction='banned', sanction_until=null, verification_status='verified' where id='0f000000-0000-0000-0000-0000000000e2';
+  insert into private.school_identities(member_id, real_name, student_no_hmac, hmac_key_version) values ('0f000000-0000-0000-0000-0000000000e2','김', repeat('e',64),1) on conflict do nothing;
+  update private.policy_settings set value='30' where key='hold_retention_days';   -- 합성 테스트값
+  perform private.prepare_account_deletion('0f000000-0000-0000-0000-0000000000e2');
+  if (select count(*) from private.enforcement_holds where student_no_hmac=repeat('e',64)) <> 1 then raise exception 'B6b first prepare should create 1 hold'; end if;
+  if (select verification_status from private.members where id='0f000000-0000-0000-0000-0000000000e2') <> 'deleting' then raise exception 'B6b should be deleting after prepare'; end if;
+  perform private.prepare_account_deletion('0f000000-0000-0000-0000-0000000000e2');   -- 재호출
+  if (select count(*) from private.enforcement_holds where student_no_hmac=repeat('e',64)) <> 1 then raise exception 'B6b re-prepare must not add hold'; end if;
+  if (select verification_status from private.members where id='0f000000-0000-0000-0000-0000000000e2') <> 'deleting' then raise exception 'B6b re-prepare should keep deleting'; end if;
+
   raise notice '80_009_behavior: ALL BEHAVIOR TESTS PASSED';
 end $B$;
 

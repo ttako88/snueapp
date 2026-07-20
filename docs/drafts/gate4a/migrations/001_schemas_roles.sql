@@ -21,6 +21,13 @@ revoke usage, create on schema private from authenticated;
 -- 함수 실행을 위해 USAGE만 부여 (CREATE는 미부여)
 grant usage on schema private to service_role;
 
+-- 2-1. public 스키마도 CREATE 차단 (GPT 검수 반영 — 공격자의 public 객체 생성 구조적 제거)
+--      anon·authenticated에는 API 사용에 필요한 USAGE만 유지
+revoke create on schema public from public;
+revoke create on schema public from anon;
+revoke create on schema public from authenticated;
+grant usage on schema public to anon, authenticated;
+
 -- TODO(Gate 4a dev 확인): 스케줄 작업을 실제 실행하는 스케줄러 소유 역할명 확인 후
 --   grant usage on schema private to <스케줄러_역할>;
 -- (Supabase pg_cron 잡은 보통 postgres 소유로 실행되므로 추가 grant가 불필요할 수 있음 — dev에서 실측)

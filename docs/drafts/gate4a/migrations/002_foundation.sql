@@ -115,13 +115,14 @@ create table private.verification_requests (
   purged_at        timestamptz,
   purge_attempts   int not null default 0 check (purge_attempts >= 0),
   purge_last_error text,
-  -- 구조 CHECK (§10 v1.3 — 사유별 시차 CHECK 없음)
-  check (status <> 'approved' or (reject_reason_code is null and reviewed_at is not null)),
-  check (status <> 'rejected' or reject_reason_code is not null),
+  -- 구조 CHECK (§10 v1.3 + GPT 검수 보강 — 사유별 시차 CHECK 없음)
+  check (status not in ('approved','rejected')
+         or (submitted_at is not null and reviewed_at is not null and reviewer_id is not null)),
+  check ((status = 'rejected') = (reject_reason_code is not null)),   -- 양방향
   check (status <> 'submitted' or submitted_at is not null),
   check (purged_at is null or purge_started_at is not null),
   check (purged_at is null or purged_at >= purge_started_at),
-  check (purged_at is null or storage_path is null)
+  check (purged_at is null or (storage_path is null and real_name is null))
 );
 -- 동시 제한: uploading+submitted 합산 1건 (§4.1 v1.3)
 create unique index verification_requests_one_active
@@ -135,6 +136,8 @@ revoke all on private.verification_requests from anon, authenticated;
 -- ------------------------------------------------------------
 -- E. private: enforcement_holds (members와 FK 없음 — §2.6/부록 I)
 -- ------------------------------------------------------------
+-- (GPT 검수 반영) released_at 폐기 — 만료·수동 해제 모두 행 hard delete.
+-- 테이블에는 활성 hold만 존재, 해제 사실은 HMAC 없는 audit log로만 기록.
 create table private.enforcement_holds (
   id               bigint generated always as identity primary key,
   student_no_hmac  text not null check (char_length(student_no_hmac) = 64),
@@ -144,10 +147,8 @@ create table private.enforcement_holds (
   source_case_id   bigint,            -- 의도적 FK 없음 (독립성)
   retained_at      timestamptz not null default now(),
   retention_until  timestamptz,       -- null=미확정. 미확정 상태에서 production 생성은 함수가 거부 (§12-3)
-  released_at      timestamptz
+  unique (hmac_key_version, student_no_hmac)
 );
-create unique index enforcement_holds_active
-  on private.enforcement_holds (hmac_key_version, student_no_hmac) where released_at is null;
 create index enforcement_holds_retention on private.enforcement_holds (retention_until);
 
 alter table private.enforcement_holds enable row level security;
@@ -211,14 +212,15 @@ create index comments_post_list on public.comments (post_id, deleted_at, id);
 -- owners: 작성자 연결 (private가 아닌 public에 두되 RLS로 본인 select만 — 기존 설계 계승)
 create table public.post_owners (
   post_id    bigint primary key references public.posts (id) on delete cascade,
-  user_id    uuid not null,            -- auth.users.id (FK는 members 경유 — 탈퇴 파이프라인 ⑦에서 행 삭제)
+  user_id    uuid not null references private.members (id) on delete cascade,
+  -- member FK cascade (GPT 검수 반영): 탈퇴 파이프라인 ⑦이 먼저 지우지만, cascade가 최종 방어선
   created_at timestamptz not null default now()
 );
 create index post_owners_user on public.post_owners (user_id);
 
 create table public.comment_owners (
   comment_id bigint primary key references public.comments (id) on delete cascade,
-  user_id    uuid not null,
+  user_id    uuid not null references private.members (id) on delete cascade,
   created_at timestamptz not null default now()
 );
 create index comment_owners_user on public.comment_owners (user_id);
@@ -230,9 +232,18 @@ alter table public.comment_owners enable row level security;
 
 revoke all on public.posts, public.comments, public.post_owners, public.comment_owners
   from anon, authenticated;
--- posts/comments: select/insert/update만 (DELETE 정책·권한 없음 = hard delete 불가)
-grant select, insert, update on public.posts    to authenticated;
-grant select, insert, update on public.comments to authenticated;
+-- 컬럼 단위 권한 (GPT 검수 반영 — 트리거 의존을 줄이고 클라이언트 지정 가능 컬럼을 DDL로 제한)
+-- DELETE 정책·권한 없음 = hard delete 불가
+grant select on public.posts to authenticated;
+grant insert (board_id, title, body, is_anonymous)  on public.posts to authenticated;
+grant update (title, body, deleted_at)              on public.posts to authenticated;
+grant select on public.comments to authenticated;
+grant insert (post_id, body, is_anonymous)          on public.comments to authenticated;
+grant update (body, deleted_at)                     on public.comments to authenticated;
+-- author_nickname·author_withdrawn_at·hidden_at·카운터·created_at은 클라이언트 지정 불가 (definer·트리거만)
+-- identity 직접 INSERT에 필요한 sequence만 개별 grant (전체 sequence 권한 복구 금지)
+grant usage on sequence public.posts_id_seq    to authenticated;   -- TODO: 실제 시퀀스명 dev 확인
+grant usage on sequence public.comments_id_seq to authenticated;   -- (identity는 pg_get_serial_sequence로 확인)
 grant select on public.post_owners    to authenticated;
 grant select on public.comment_owners to authenticated;
 
@@ -262,7 +273,7 @@ revoke all on private.anon_aliases from anon, authenticated;
 -- ------------------------------------------------------------
 create table public.post_votes (
   post_id    bigint not null references public.posts (id) on delete cascade,
-  member_id  uuid not null,           -- auth.uid() 기준 (트리거로 강제)
+  member_id  uuid not null references private.members (id) on delete cascade,
   created_at timestamptz not null default now(),
   primary key (post_id, member_id)    -- 1인 1글 1회 — 스키마 보장 (§2.9)
 );
@@ -275,7 +286,7 @@ create policy post_votes_self_select on public.post_votes
 -- insert/delete 정책은 is_writable_member() 의존 → 003
 
 create table public.bookmarks (
-  member_id  uuid not null,
+  member_id  uuid not null references private.members (id) on delete cascade,
   post_id    bigint not null references public.posts (id) on delete cascade,
   created_at timestamptz not null default now(),
   primary key (member_id, post_id)
@@ -283,8 +294,10 @@ create table public.bookmarks (
 alter table public.bookmarks enable row level security;
 revoke all on public.bookmarks from anon, authenticated;
 grant select, insert, delete on public.bookmarks to authenticated;
-create policy bookmarks_self_all on public.bookmarks
-  for all to authenticated using (member_id = auth.uid()) with check (member_id = auth.uid());
+-- (GPT 검수 반영) 002는 본인 select만 — insert/delete 정책은 003에서
+-- is_writable_member()+대상 post 열람 가능 조건과 함께 생성
+create policy bookmarks_self_select on public.bookmarks
+  for select to authenticated using (member_id = auth.uid());
 
 create table private.post_views (
   post_id   bigint not null references public.posts (id) on delete cascade,
@@ -342,7 +355,7 @@ create table private.case_snapshots (
   id          bigint generated always as identity primary key,
   case_id     bigint not null references private.moderation_cases (id),
   captured_at timestamptz not null default now(),
-  content     text not null check (char_length(content) <= 102400)   -- 대상 콘텐츠+제한 문맥만, 100KB
+  content     text not null check (octet_length(content) <= 102400)  -- 실제 바이트 기준 100KB (GPT 검수)
 );
 create index case_snapshots_case on private.case_snapshots (case_id);
 
@@ -353,7 +366,9 @@ create table private.moderation_actions (
     ('hide','restore','warn','write_restrict','suspend_7d','suspend_30d','ban','release','dismiss')),
   target_member_id uuid,              -- projection에서 미반환 (§5.5)
   actor_id         uuid not null,
-  reason           text,
+  reason_code      text,              -- 표준화 코드 (GPT 검수 — 자유 서술과 구분)
+  reason           text check (char_length(reason) <= 500),
+  expires_at       timestamptz,       -- 제재성 조치의 만료 시점 (GPT 검수)
   created_at       timestamptz not null default now()
 );
 create index moderation_actions_case on private.moderation_actions (case_id, created_at);
@@ -383,7 +398,7 @@ revoke all on private.moderation_cases, private.reports, private.case_snapshots,
 -- ------------------------------------------------------------
 create table public.operational_messages (
   id         bigint generated always as identity primary key,
-  member_id  uuid not null,
+  member_id  uuid not null references private.members (id) on delete cascade,
   kind       text not null check (kind in
     ('verification_approved','verification_rejected','deletion_notice','warning',
      'sanction_notice','report_result','system')),

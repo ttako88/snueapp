@@ -117,6 +117,17 @@ create policy post_votes_delete on public.post_votes
   for delete to authenticated
   using (member_id = auth.uid() and public.is_writable_member());
 
+-- bookmarks insert/delete (GPT 검수 — 002는 본인 select만, 쓰기는 여기서 조건부)
+create policy bookmarks_insert on public.bookmarks
+  for insert to authenticated
+  with check (member_id = auth.uid() and public.is_writable_member()
+         and exists (select 1 from public.posts p
+                     where p.id = post_id and p.deleted_at is null and p.hidden_at is null
+                       and public.board_access_ok(p.board_id)));
+create policy bookmarks_delete on public.bookmarks
+  for delete to authenticated
+  using (member_id = auth.uid() and public.is_writable_member());
+
 -- ------------------------------------------------------------
 -- 3. 트리거
 -- ------------------------------------------------------------
@@ -437,8 +448,9 @@ begin
       where s.hmac_key_version = p_key_vers[i] and s.student_no_hmac = p_hmacs[i] and s.revoked_at is null;
     if found then raise exception 'unverifiable student number'; end if;   -- 기존 계정 정보 비노출
     perform 1 from private.enforcement_holds h
-      where h.hmac_key_version = p_key_vers[i] and h.student_no_hmac = p_hmacs[i] and h.released_at is null;
+      where h.hmac_key_version = p_key_vers[i] and h.student_no_hmac = p_hmacs[i];
     if found then raise exception 'unverifiable student number'; end if;   -- 동일 메시지 (§4.1)
+    -- (released_at 폐기 — 테이블에는 활성 hold만 존재. GPT 검수 반영)
   end loop;
   insert into private.verification_requests
     (member_id, doc_type, real_name, student_no_hmac, hmac_key_version, storage_path, status)

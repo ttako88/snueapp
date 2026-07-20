@@ -416,7 +416,10 @@ begin
     return jsonb_build_object('status','already_resolved','case_status',v_case.status);  -- 멱등
   end if;
 
-  -- 아래 콘텐츠 변경은 정식 검토 경로이므로 가드를 통과시킨다 (N7)
+  -- 아래 콘텐츠 변경은 정식 검토 경로이므로 가드를 통과시킨다 (N7).
+  -- ★ 반드시 예외 안전 블록으로 감싼다: 중간에 실패하면 플래그가 '1'로 남아
+  --   같은 트랜잭션의 이후 조작이 가드를 통과해버린다.
+  begin
   perform set_config('app.auto_hide_review', '1', true);
 
   if p_decision = 'restore' then
@@ -463,6 +466,10 @@ begin
   -- 그대로 두면 같은 트랜잭션 안의 이후 직접 조작까지 가드를 통과해 버린다
   -- (dev 행동검증에서 실제로 재현됨).
   perform set_config('app.auto_hide_review', '0', true);
+  exception when others then
+    perform set_config('app.auto_hide_review', '0', true);  -- 실패해도 반드시 내린다
+    raise;
+  end;
 
   insert into private.moderation_actions (case_id, action, actor_id, reason)
   values (p_case_id, case when p_decision = 'restore' then 'restore' else 'hide' end, auth.uid(), p_reason);

@@ -88,6 +88,51 @@ async function main() {
       `select count(*)::int n from private.audit_logs where action='bug_report:resolved' and target_id='${b.id}'`);
     rec("처리가 감사로그에 남음", al.n === 1);
 
+    // ── (R2) 문자열 검증 확대 ──
+    // ME는 앞선 도배 테스트로 rate limit에 걸려 있어 검증 전에 rate_limited로 빠진다
+    // → 아직 제보하지 않은 회원으로 검사한다
+    await actAs(OP);
+    await mustFail("제목에 줄바꿈·제어문자 거부",
+      `select public.submit_bug_report('other', '제목' || chr(10) || '두줄', '내용이 충분히 깁니다')`);
+    await mustFail("앱 버전 형식 위반 거부",
+      `select public.submit_bug_report('other','제목','내용이 충분히 깁니다','/settings','v1 ; drop')`);
+
+    // ── (R4) 상태·처리시각 정합 ──
+    await actAs(OP);
+    await mustFail("종결에는 사유 필수",
+      `select public.triage_bug_report(${b.id}, 'wont_fix', null)`);
+    await client.query(`select public.triage_bug_report(${b.id}, 'in_progress', '확인 중')`);
+    const { rows: [np] } = await client.query(
+      `select handled_at, purge_after from private.bug_reports where id=${b.id}`);
+    rec("비종결로 되돌리면 처리시각·보존기한이 비워짐",
+      np.handled_at === null && np.purge_after === null);
+    await client.query(`select public.triage_bug_report(${b.id}, 'resolved', '수정 완료')`);
+    const { rows: [tp] } = await client.query(
+      `select handled_at is not null h, purge_after is not null p from private.bug_reports where id=${b.id}`);
+    rec("종결하면 처리시각·보존기한(12개월) 설정", tp.h === true && tp.p === true);
+
+    // ── (R3) duplicate 순환·연쇄 차단 ──
+    const { rows: [d1] } = await client.query(`select id from private.bug_reports order by id offset 1 limit 1`);
+    const { rows: [d2] } = await client.query(`select id from private.bug_reports order by id offset 2 limit 1`);
+    await mustFail("자기 자신을 원본으로 지정 불가",
+      `select public.triage_bug_report(${d1.id}, 'duplicate', '중복', ${d1.id})`);
+    await client.query(`select public.triage_bug_report(${d1.id}, 'duplicate', '중복', ${d2.id})`);
+    await mustFail("이미 duplicate인 제보를 원본으로 지정 불가(사슬 차단)",
+      `select public.triage_bug_report(${d2.id}, 'duplicate', '중복', ${d1.id})`);
+
+    // ── (R5) 본인 철회 → 내용 비식별화 ──
+    await actAs(RESTRICTED);
+    const { rows: [rb] } = await client.query(
+      `select id from private.bug_reports where member_id='${RESTRICTED}' limit 1`);
+    await mustPass("제한 회원도 본인 제보 철회 가능", `select public.withdraw_bug_report(${rb.id})`);
+    const { rows: [wd] } = await client.query(
+      `select title, detail, app_path, withdrawn_at is not null w, purge_after is not null p
+         from private.bug_reports where id=${rb.id}`);
+    rec("철회 시 제목·상세·경로 비식별화 + 30일 파기 예약",
+      wd.title === "(철회된 제보)" && wd.detail === "(철회로 삭제됨)" &&
+      wd.app_path === null && wd.w === true && wd.p === true,
+      `title=${wd.title}`);
+
     // ── 탈퇴 후 존속 ──
     await client.query(`select set_config('request.jwt.claims', null, true)`);
     await mustPass("제보자 탈퇴 가능", `delete from auth.users where id = '${ME}'`);

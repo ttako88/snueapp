@@ -81,12 +81,33 @@ async function main() {
       `update private.course_review_actor_aliases set member_id='${B_UUID}' where id=${AL1}`);
     await mustFail("별칭의 과목 변경 금지",
       `update private.course_review_actor_aliases set subject_id=9002 where id=${AL1}`);
+    // (REQUIRED-010-N1) 가드가 실제로 좁은지 — 예전엔 아래가 전부 통과했다
+    await mustFail("created_at 단독 변경 거부",
+      `update private.course_review_actor_aliases set created_at=now() - interval '1 day' where id=${AL1}`);
+    await mustFail("detached_at 임의 설정 거부",
+      `update private.course_review_actor_aliases set detached_at=now() where id=${AL1}`);
+    // now()는 트랜잭션 시각이라 같은 값이 되어 "변경 없음"이 된다 → 확실히 다른 값으로
+    await mustFail("탈퇴 전이에 다른 컬럼 변경을 끼워넣기 거부",
+      `update private.course_review_actor_aliases
+          set member_id=null, created_at=timestamptz '2000-01-01' where id=${AL1}`);
+    await mustFail("생성 시 detached_at 미리 설정 거부",
+      `insert into private.course_review_actor_aliases (subject_id, member_id, detached_at)
+       values (9002, '${B_UUID}', now())`);
 
     // 다른 과목의 별칭을 빌려 쓰면 복합 FK가 막아야 한다
     const alOther = await alias(9002, A_UUID);
     await mustFail("다른 과목의 별칭으로 리뷰 작성 금지(과목 간 연결 차단)",
       `insert into private.course_reviews (subject_id,member_id,actor_alias_id,semester,status,grading)
        values (9001,${A},${alOther},'2025-1','draft','보통')`);
+
+    // (REQUIRED-010-N2) 리뷰 소유자와 별칭 소유자가 다르면 안 된다.
+    // DEFERRABLE 제약이라 평소엔 커밋 시점에 검사된다 → 테스트에서는
+    // set constraints all immediate로 그 자리에서 터뜨린다.
+    await mustFail("남의 별칭으로 리뷰 작성 금지(소유자 불일치)",
+      `insert into private.course_reviews (subject_id,member_id,actor_alias_id,semester,status,grading)
+       values (9002,'${B_UUID}',${alOther},'2025-2','draft','보통');
+       set constraints all immediate;`);
+    await client.query("set constraints all deferred");
 
     // 격리: anon/authenticated는 별칭 테이블에 직접 접근할 수 없어야 한다
     const { rows: [priv] } = await client.query(`

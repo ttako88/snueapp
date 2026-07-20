@@ -1,5 +1,5 @@
 -- ============================================================
--- 010_course_review.sql — 강의평가 모듈 (1단계) · v4
+-- 010_course_review.sql — 강의평가 모듈 (1단계) · v6
 --
 -- ⚠️ PENDING 초안. 운영은 물론 dev에도 적용하지 않는다.
 --    적용 조건: ①GPT 재검수 통과 ②dev 클린 리허설 ③헌장·처리방침 확정 ④사용자 승인
@@ -76,6 +76,9 @@ create unique index if not exists course_review_actor_aliases_one
 --    통과시킬 수 있다.
 --  · 허용되는 UPDATE는 "탈퇴로 인한 member_id non-null → null" 뿐이고,
 --    그때 detached_at을 자동 기록한다. subject_id·id는 불변.
+-- (REQUIRED-010-N1) 컬럼을 하나씩 비교하면 created_at 단독 변경, detached_at 임의 설정,
+-- "member_id를 null로 만들면서 다른 컬럼도 같이 바꾸기"가 전부 통과한다.
+-- 주석이 말하는 만큼 실제로 좁히려면 행 전체를 비교해야 한다(원장과 같은 방식).
 create or replace function private.guard_actor_alias()
 returns trigger language plpgsql set search_path='' as $$
 begin
@@ -83,17 +86,25 @@ begin
     if new.member_id is null then
       raise exception 'actor alias must be created with a member';
     end if;
+    if new.detached_at is not null then
+      raise exception 'detached_at is set by withdrawal only';
+    end if;
     return new;
   end if;
-  if new.id is distinct from old.id or new.subject_id is distinct from old.subject_id then
-    raise exception 'actor alias identity is immutable';
-  end if;
+
+  -- 탈퇴 전이: member_id와 detached_at 외에는 아무것도 바뀌면 안 된다
   if old.member_id is not null and new.member_id is null then
-    if new.detached_at is null then new.detached_at := clock_timestamp(); end if;
+    if (to_jsonb(new) - 'member_id' - 'detached_at') is distinct from
+       (to_jsonb(old) - 'member_id' - 'detached_at') then
+      raise exception 'withdrawal may only clear member_id';
+    end if;
+    new.detached_at := clock_timestamp();   -- 값은 함수가 직접 정한다
     return new;
   end if;
-  if new.member_id is distinct from old.member_id then
-    raise exception 'actor alias owner is immutable (only withdrawal may clear it)';
+
+  -- 그 밖에는 완전한 no-op만 허용
+  if to_jsonb(new) is distinct from to_jsonb(old) then
+    raise exception 'actor alias is immutable (only withdrawal may clear member_id)';
   end if;
   return new;
 end $$;
@@ -103,6 +114,39 @@ drop trigger if exists course_review_actor_aliases_guard on private.course_revie
 create trigger course_review_actor_aliases_guard
   before insert or update on private.course_review_actor_aliases
   for each row execute function private.guard_actor_alias();
+
+-- (REQUIRED-010-N2) 복합 FK는 "같은 과목 별칭인가"만 본다. 아직 리뷰의 member_id가 A인데
+-- 별칭의 member_id는 B인 행이 만들어질 수 있고, 그러면 A가 B의 별칭으로 쓴 셈이 되어
+-- 철회·보상 귀속이 어긋난다. 콘텐츠와 별칭의 소유자가 항상 같아야 한다.
+-- 회원 삭제 시 두 테이블의 SET NULL 순서가 보장되지 않으므로 **DEFERRABLE**로 둔다
+-- (트랜잭션 끝에 한 번만 본다 → 중간의 한쪽만 null인 상태를 허용).
+create or replace function private.check_alias_owner_match()
+returns trigger language plpgsql set search_path='' as $$
+declare v_alias uuid; v_owner uuid; v_content uuid;
+begin
+  if tg_table_name = 'course_review_actor_aliases' then
+    -- 별칭 쪽이 바뀌면 그 별칭을 쓰는 콘텐츠를 전부 재검사
+    if exists (select 1 from private.course_reviews r
+                where r.actor_alias_id = new.id and r.member_id is distinct from new.member_id)
+       or exists (select 1 from private.exam_tips t
+                where t.actor_alias_id = new.id and t.member_id is distinct from new.member_id) then
+      raise exception 'alias owner must match its content owner';
+    end if;
+    return null;
+  end if;
+
+  v_alias := new.actor_alias_id;
+  v_content := new.member_id;
+  select a.member_id into v_owner
+    from private.course_review_actor_aliases a where a.id = v_alias;
+  if v_owner is distinct from v_content then
+    raise exception 'content owner must match alias owner';
+  end if;
+  return null;
+end $$;
+revoke execute on function private.check_alias_owner_match() from public, anon, authenticated;
+
+-- (트리거 부착은 course_reviews·exam_tips가 만들어진 뒤에 — 파일 아래쪽 참조)
 
 -- 원문 → canonical 매핑 보존 (표기 흔들림 추적용)
 create table if not exists private.course_review_subject_aliases (
@@ -229,6 +273,25 @@ create table if not exists private.exam_tips (
 create unique index if not exists exam_tips_one_active
   on private.exam_tips (subject_id, actor_alias_id, semester)
   where status in ('draft','submitted','published','hidden_by_moderation');
+
+-- 콘텐츠 소유자 = 별칭 소유자 (REQUIRED-010-N2). 두 테이블이 만들어진 뒤 부착한다.
+drop trigger if exists course_reviews_alias_owner on private.course_reviews;
+create constraint trigger course_reviews_alias_owner
+  after insert or update on private.course_reviews
+  deferrable initially deferred
+  for each row execute function private.check_alias_owner_match();
+
+drop trigger if exists exam_tips_alias_owner on private.exam_tips;
+create constraint trigger exam_tips_alias_owner
+  after insert or update on private.exam_tips
+  deferrable initially deferred
+  for each row execute function private.check_alias_owner_match();
+
+drop trigger if exists actor_aliases_owner_match on private.course_review_actor_aliases;
+create constraint trigger actor_aliases_owner_match
+  after update on private.course_review_actor_aliases
+  deferrable initially deferred
+  for each row execute function private.check_alias_owner_match();
 
 -- ------------------------------------------------------------
 -- 4. 티켓 원장 (불변)

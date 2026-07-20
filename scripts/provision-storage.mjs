@@ -13,7 +13,7 @@
 // 실행 예: node provision-storage.mjs                → dry-run (원격 읽기 전용·변경 없음)
 //          node provision-storage.mjs --offline-plan  → 완전 무접촉, 기대 설정만 출력
 //          APP_ENV=dev node provision-storage.mjs --apply
-// env: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / APP_ENV(dev|prod) /
+// env: SUPABASE_URL / SUPABASE_SECRET_KEY / APP_ENV(dev|prod) /
 //      EXPECTED_PROJECT_REF_DEV / EXPECTED_PROJECT_REF_PROD  (값은 env에만 — 코드 미기재)
 // r4: dry-run도 원격 읽기이므로 APP_ENV·EXPECTED_PROJECT_REF 검증을 통과해야 조회함
 // ============================================================
@@ -29,7 +29,7 @@ const EXPECTED = {
 const apply = process.argv.includes("--apply");
 const offlinePlan = process.argv.includes("--offline-plan");
 const url = process.env.SUPABASE_URL;
-const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const key = process.env.SUPABASE_SECRET_KEY;
 const appEnv = process.env.APP_ENV;   // r4: TARGET_ENV → APP_ENV 통일 (dev|prod, 그 외 중단)
 
 // r4: 고정 오류 코드만 출력 (원문·secret 비출력, 운영자가 분류 가능)

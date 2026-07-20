@@ -58,7 +58,7 @@
 - 비활성 기본값: `MAINTENANCE_ENABLED` 미설정 시 모든 job이 no-op — DB 준비+smoke 통과 후에만 활성화
 - 인증 실패 시 no-op / 모든 job idempotent / 로그에 토큰·학번·신원값·실명 금지 (비식별 참조만)
 - env 이름 목록 (값·프로젝트 ID·secret은 어디에도 미기재, dev/prod 분리 — r4):
-  `APP_ENV`(dev|prod — 그 외 값이면 무조건 중단) `SUPABASE_URL` `SUPABASE_SERVICE_ROLE_KEY`
+  `APP_ENV`(dev|prod — 그 외 값이면 무조건 중단) `SUPABASE_URL` `SUPABASE_SECRET_KEY`
   `CRON_SECRET`(16자 이상 강제) `MAINTENANCE_ENABLED` `EXPECTED_PROJECT_REF_DEV` `EXPECTED_PROJECT_REF_PROD`
   `PREVIEW_IP_DAILY_CAP` `STUDENT_NO_HMAC_CURRENT_VERSION` `STUDENT_NO_HMAC_KEY_V1`
   `PREVIEW_COOKIE_SIGN_KEY` `PREVIEW_IP_HMAC_KEY` (domain separation §8)

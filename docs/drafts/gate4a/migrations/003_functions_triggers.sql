@@ -263,7 +263,7 @@ begin
   v := trim(regexp_replace(coalesce(p_nick,''), '\s+', ' ', 'g'));
   v := normalize(v, nfc);
   if v = '' or char_length(v) not between 2 and 16 then raise exception 'invalid nickname length'; end if;
-  if v ~ '[ -]' then raise exception 'invalid characters'; end if;
+  if v ~ '[[:cntrl:]]' then raise exception 'invalid characters'; end if;
   if lower(v) ~ '(운영자|관리자|공식|공지|admin|administrator|moderator|operator|owner)' then
     raise exception 'reserved nickname'; end if;
   return v;

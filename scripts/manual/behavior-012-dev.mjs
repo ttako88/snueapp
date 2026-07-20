@@ -15,6 +15,10 @@ async function mustFail(n, sql) {
   try { await client.query("savepoint s"); await client.query(sql); await client.query("release savepoint s"); rec(n, false, "막혔어야 함"); }
   catch (e) { await client.query("rollback to savepoint s"); rec(n, true, e.message.split("\n")[0].slice(0, 55)); }
 }
+async function mustPass(n, sql) {
+  try { await client.query("savepoint s"); await client.query(sql); await client.query("release savepoint s"); rec(n, true); }
+  catch (e) { await client.query("rollback to savepoint s"); rec(n, false, e.message.split("\n")[0].slice(0, 55)); }
+}
 const actAs = (u) => client.query(`select set_config('request.jwt.claims','{"sub":"${u}"}',true)`);
 const U = (i) => `00000000-0000-0000-0000-0000000012${String(i).padStart(2, "0")}`;
 const counts = async (id) => (await client.query(
@@ -77,7 +81,7 @@ async function main() {
     const bm2 = (await client.query(`select public.toggle_bookmark(${P}) r`)).rows[0].r;
     rec("스크랩 토글 on/off", bm1.bookmarked === true && bm2.bookmarked === false);
     await client.query(`select public.toggle_bookmark(${P})`);
-    const { rows: lb } = await client.query(`select * from public.list_my_bookmarks(50, null)`);
+    const { rows: lb } = await client.query(`select * from public.list_my_bookmarks(50, null, null)`);
     rec("내 스크랩 목록에 나옴", lb.length === 1 && String(lb[0].post_id) === String(P), `${lb.length}건`);
 
     // ── 신고: 임계 미만은 숨기지 않는다 ──
@@ -113,6 +117,93 @@ async function main() {
     await mustFail("authenticated의 vote_count 직접 수정 권한 없음",
       `set local role authenticated; update public.posts set vote_count = 999 where id = ${P}`);
     await client.query("reset role");
+
+    // ── (012-1) 가시성 우회 ──
+    // 접근 불가 게시판(hidden)의 글에는 ID를 알아도 투표·스크랩 불가
+    const { rows: [hb] } = await client.query(
+      `select id from public.boards where access='hidden' order by sort limit 1`);
+    if (hb) {
+      await actAs(U(0));
+      const { rows: [hp] } = await client.query(
+        `insert into public.posts (board_id,title,body,author_nickname) values (${hb.id},'비공개판','본문','회원0') returning id`);
+      await actAs(U(1));
+      await mustFail("접근 불가 게시판 글에는 투표 불가", `select public.vote_post(${hp.id}, 1::smallint)`);
+      await mustFail("접근 불가 게시판 글은 스크랩 불가", `select public.toggle_bookmark(${hp.id})`);
+    } else {
+      rec("접근 불가 게시판 글 투표/스크랩 차단", true, "hidden 게시판 없음 — 건너뜀");
+    }
+
+    // 정지 회원은 북마크 목록으로도 제목을 우회 열람할 수 없다.
+    // (앞선 테스트에서 P가 자동숨김됐으므로 새 글을 하나 스크랩해 기준선을 만든다)
+    await actAs(U(0));
+    const { rows: [pv] } = await client.query(
+      `insert into public.posts (board_id,title,body,author_nickname) values (${b.id},'스크랩대상','본문','회원0') returning id`);
+    await actAs(U(1));
+    await client.query(`select public.toggle_bookmark(${pv.id})`);
+    const beforeSusp = (await client.query(`select * from public.list_my_bookmarks(50,null,null)`)).rows.length;
+    await client.query(`update private.members set sanction='community_suspended',
+      sanction_until = now() + interval '1 day' where id='${U(1)}'`);
+    const afterSusp = (await client.query(`select * from public.list_my_bookmarks(50,null,null)`)).rows.length;
+    rec("정지 회원은 북마크 목록으로 제목 우회 열람 불가",
+      beforeSusp > 0 && afterSusp === 0, `정지 전 ${beforeSusp} → 후 ${afterSusp}`);
+    await client.query(`update private.members set sanction='none', sanction_until=null where id='${U(1)}'`);
+
+    // ── (012-3) 긴급 신고 악용 방지 ──
+    await actAs(U(0));
+    const { rows: [pe] } = await client.query(
+      `insert into public.posts (board_id,title,body,author_nickname) values (${b.id},'긴급상세','본문','회원0') returning id`);
+    await actAs(U(5));
+    await mustFail("긴급 신고는 상세 설명 필수",
+      `select public.submit_report('post', ${pe.id}, 'privacy', null)`);
+
+    // 한 신고자의 긴급 자동숨김 24시간 3건 상한
+    const madePosts = [];
+    for (let i = 0; i < 4; i++) {
+      await actAs(U(0));
+      const { rows: [pp] } = await client.query(
+        `insert into public.posts (board_id,title,body,author_nickname) values (${b.id},'긴급${i}','본문','회원0') returning id`);
+      madePosts.push(pp.id);
+      await actAs(U(5));
+      await client.query(`select public.submit_report('post', ${pp.id}, 'privacy', '개인정보 노출 상세')`);
+    }
+    const hidden = [];
+    for (const id of madePosts) hidden.push((await counts(id)).hidden_at !== null);
+    rec("한 신고자의 긴급 자동숨김은 24시간 3건까지",
+      hidden.filter(Boolean).length === 3 && hidden[3] === false,
+      `숨김 ${hidden.filter(Boolean).length}/4, 4번째=${hidden[3]}`);
+
+    // ── (012-2) 댓글 자동 숨김 + comment_count 1회만 감소 ──
+    await actAs(U(0));
+    const { rows: [pc] } = await client.query(
+      `insert into public.posts (board_id,title,body,author_nickname) values (${b.id},'댓글대상','본문','회원0') returning id`);
+    const { rows: [cm] } = await client.query(
+      `insert into public.comments (post_id,body,author_nickname) values (${pc.id},'문제 댓글','회원0') returning id`);
+    await client.query(`update public.posts set comment_count = 1 where id = ${pc.id}`);
+    await actAs(U(1));
+    await client.query(`select public.submit_report('comment', ${cm.id}, 'obscene_illegal', '불법 내용 상세')`);
+    const { rows: [cc] } = await client.query(
+      `select (select hidden_at is not null from public.comments where id=${cm.id}) h,
+              (select comment_count from public.posts where id=${pc.id}) n`);
+    rec("긴급 신고로 댓글도 자동 숨김 + comment_count 1 감소", cc.h === true && cc.n === 0, `hidden=${cc.h} count=${cc.n}`);
+
+    // ── (012-4) 복구·종결 원자성 ──
+    await client.query(`update private.members set role='operator' where id='${U(2)}'`);
+    const { rows: [kase] } = await client.query(
+      `select id from private.moderation_cases where target_type='comment' and target_id=${cm.id}`);
+    await actAs(U(2));
+    await mustPass("자동숨김 사건 복구+종결(원자)",
+      `select public.resolve_auto_hidden_case(${kase.id}, 'restore', '오신고로 판단')`);
+    const { rows: [after] } = await client.query(
+      `select (select hidden_at is null from public.comments where id=${cm.id}) h,
+              (select comment_count from public.posts where id=${pc.id}) n,
+              (select status from private.moderation_cases where id=${kase.id}) s,
+              (select emergency from private.moderation_cases where id=${kase.id}) e`);
+    rec("복구 시 댓글 노출·카운트 1 증가·사건 종결·긴급 해제",
+      after.h === true && after.n === 1 && after.s === "dismissed" && after.e === false,
+      `hidden해제=${after.h} count=${after.n} ${after.s} emergency=${after.e}`);
+    const again = (await client.query(
+      `select public.resolve_auto_hidden_case(${kase.id}, 'restore', '중복 호출')`)).rows[0].resolve_auto_hidden_case;
+    rec("이미 처리된 사건은 멱등 수렴", again.status === "already_resolved", again.status);
   } finally {
     await client.query("rollback");
     await client.end();

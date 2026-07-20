@@ -80,9 +80,10 @@ begin
   if not authz.is_writable_member() then raise exception 'not allowed'; end if;
   if p_value not in (-1, 0, 1) then raise exception 'invalid value'; end if;
 
-  select * into v_post from public.posts p
-   where p.id = p_post_id and p.deleted_at is null and p.hidden_at is null;
-  if v_post.id is null then raise exception 'not found'; end if;
+  -- (REQUIRED-012-1) deleted/hidden만 보면 ID를 추측해 **접근 불가 게시판·차단한
+  -- 작성자의 글**에도 투표할 수 있다. 기존 가시성 헬퍼를 그대로 쓴다.
+  if not authz.post_visible_to_me(p_post_id) then raise exception 'not found'; end if;
+  select * into v_post from public.posts p where p.id = p_post_id;
 
   -- 자기 글에는 투표하지 않는다 (자가 추천 어뷰징 차단)
   if exists (select 1 from public.post_owners o
@@ -121,10 +122,8 @@ returns jsonb language plpgsql security definer set search_path='' as $$
 declare v_exists boolean;
 begin
   if not authz.is_writable_member() then raise exception 'not allowed'; end if;
-  if not exists (select 1 from public.posts p
-                  where p.id = p_post_id and p.deleted_at is null and p.hidden_at is null) then
-    raise exception 'not found';
-  end if;
+  -- (REQUIRED-012-1) 투표와 같은 이유로 가시성 헬퍼를 쓴다
+  if not authz.post_visible_to_me(p_post_id) then raise exception 'not found'; end if;
 
   delete from public.bookmarks b
    where b.member_id = auth.uid() and b.post_id = p_post_id
@@ -140,8 +139,16 @@ end $$;
 revoke execute on function public.toggle_bookmark(bigint) from public, anon, authenticated;
 grant  execute on function public.toggle_bookmark(bigint) to authenticated;
 
--- 내 스크랩 목록 (삭제·숨김된 글은 빼고)
-create or replace function public.list_my_bookmarks(p_limit int default 50, p_before timestamptz default null)
+-- 내 스크랩 목록
+--  · (REQUIRED-012-1) 각 글이 지금도 나에게 보이는지 post_visible_to_me로 확인한다.
+--    안 그러면 community_suspended·banned 상태에서 북마크 목록으로 제목을 우회 열람하거나,
+--    접근 권한이 사라진 게시판의 글이 계속 보인다.
+--  · (FOLLOW-UP) 커서는 (bookmarked_at, post_id) 복합 — 같은 시각 행이 페이지 경계에서
+--    누락되는 것을 막는다. p_limit은 1~100으로 정규화.
+create or replace function public.list_my_bookmarks(
+  p_limit int default 50,
+  p_before timestamptz default null,
+  p_before_post bigint default null)
 returns table (post_id bigint, board_slug text, title text, author_nickname text,
                comment_count int, created_at timestamptz, bookmarked_at timestamptz)
 language sql security definer set search_path='' stable as $$
@@ -150,13 +157,16 @@ language sql security definer set search_path='' stable as $$
     join public.posts  p on p.id = bm.post_id
     join public.boards b on b.id = p.board_id
    where bm.member_id = auth.uid()
-     and p.deleted_at is null and p.hidden_at is null
-     and (p_before is null or bm.created_at < p_before)
-   order by bm.created_at desc
-   limit least(coalesce(p_limit, 50), 100);
+     and authz.is_active_member()
+     and authz.post_visible_to_me(p.id)
+     and (p_before is null
+          or bm.created_at < p_before
+          or (bm.created_at = p_before and p_before_post is not null and p.id < p_before_post))
+   order by bm.created_at desc, p.id desc
+   limit greatest(least(coalesce(p_limit, 50), 100), 1);
 $$;
-revoke execute on function public.list_my_bookmarks(int, timestamptz) from public, anon, authenticated;
-grant  execute on function public.list_my_bookmarks(int, timestamptz) to authenticated;
+revoke execute on function public.list_my_bookmarks(int, timestamptz, bigint) from public, anon, authenticated;
+grant  execute on function public.list_my_bookmarks(int, timestamptz, bigint) to authenticated;
 
 -- ------------------------------------------------------------
 -- 3. 신고
@@ -174,33 +184,82 @@ grant  execute on function public.list_my_bookmarks(int, timestamptz) to authent
 --    write_restricted 회원도 신고할 수 있게 허용한다(권한표 12.8 — 신고는 제재 중에도 가능).
 --    동결 파일은 재개봉하지 않으므로, **새 정책은 트리거로 붙인다.**
 --    이렇게 하면 어떤 경로로 신고가 들어와도 정책이 동일하게 적용된다.
+-- (REQUIRED-012-6) 운영자가 "왜 숨겨졌는지"를 사건 화면에서 볼 수 있어야 한다.
+-- audit_logs만 남기면 moderator용 get_case에서 원인을 못 본다.
+alter table private.moderation_cases
+  add column if not exists auto_hidden_at timestamptz,
+  add column if not exists auto_hide_kind text check (auto_hide_kind in ('emergency','threshold'));
+
 create or replace function private.apply_report_auto_hide()
 returns trigger language plpgsql security definer set search_path='' as $$
 declare
   v_case      private.moderation_cases%rowtype;
   v_distinct  int;
   v_emergency boolean;
+  v_recent    int;
+  v_hidden    boolean := false;
+  v_post      bigint;
 begin
   select * into v_case from private.moderation_cases c where c.id = new.case_id;
   if v_case.id is null then return new; end if;
 
-  -- 긴급 사유는 되돌릴 수 없는 피해(개인정보·불법물)라 즉시 임시 숨김
-  v_emergency := v_case.emergency or new.reason_code in ('privacy','obscene_illegal');
+  v_emergency := new.reason_code in ('privacy','obscene_illegal');
 
-  -- 그 외는 신고 1건으로 숨기지 않는다(보복신고 방지).
-  -- 서로 다른 인증회원 3명 이상일 때만.
+  -- (REQUIRED-012-3) 긴급 신고 악용 방지.
+  --  ① 긴급 사유는 상세 설명이 있어야 한다 — 근거 없이 즉시 숨기는 버튼이 되면 안 된다.
+  --  ② 한 신고자가 24시간에 일으킬 수 있는 긴급 자동숨김은 3건까지.
+  --     초과분은 **사건에는 접수하되 자동숨김만 하지 않는다**(진짜 대량 유출을 발견한
+  --     사람은 계속 신고할 수 있고, 운영진이 일괄 대응한다).
+  if v_emergency then
+    if new.detail is null or btrim(new.detail) = '' then
+      raise exception 'emergency report requires detail';
+    end if;
+    select count(*) into v_recent
+      from private.reports r
+      join private.moderation_cases c2 on c2.id = r.case_id
+     where r.reporter_id = new.reporter_id
+       and r.reason_code in ('privacy','obscene_illegal')
+       and r.created_at > now() - interval '24 hours'
+       and r.id <> new.id
+       and c2.auto_hide_kind = 'emergency';
+    if v_recent >= 3 then
+      v_emergency := false;   -- 접수는 하되 자동숨김은 하지 않음
+    end if;
+  end if;
+
+  -- 일반 신고는 1건으로 숨기지 않는다(보복신고 방지). 서로 다른 인증회원 3명 이상.
   select count(distinct r.reporter_id) into v_distinct
     from private.reports r where r.case_id = new.case_id and r.reporter_id is not null;
 
-  if v_case.target_type = 'post' and (v_emergency or v_distinct >= 3) then
-    update public.posts p set hidden_at = coalesce(p.hidden_at, clock_timestamp())
+  if not (v_emergency or v_distinct >= 3) then return new; end if;
+
+  if v_case.target_type = 'post' then
+    update public.posts p set hidden_at = clock_timestamp()
      where p.id = v_case.target_id and p.hidden_at is null;
-    if found then
-      insert into private.audit_logs (actor_id, action, target_type, target_id, case_id, reason)
-      values (null, 'auto_hide:' || case when v_emergency then 'emergency' else 'threshold' end,
-              'post', v_case.target_id::text, v_case.id,
-              '자동 임시 숨김 — 운영자 검토 대기 (회원 제재 아님)');
+    v_hidden := found;
+  else
+    -- (REQUIRED-012-2) 댓글도 같은 정책으로 보호한다. 개인정보가 담긴 댓글을
+    -- 긴급 신고해도 자동 보호가 안 되던 구멍.
+    update public.comments c set hidden_at = clock_timestamp()
+     where c.id = v_case.target_id and c.hidden_at is null and c.deleted_at is null
+    returning c.post_id into v_post;
+    v_hidden := v_post is not null;
+    -- 실제 null→hidden 전이일 때만 1회 감소 (중복 신고·이미 숨김이면 재감소 금지)
+    if v_hidden then
+      update public.posts p set comment_count = greatest(p.comment_count - 1, 0) where p.id = v_post;
     end if;
+  end if;
+
+  if v_hidden then
+    update private.moderation_cases c
+       set emergency = c.emergency or v_emergency,
+           auto_hidden_at = clock_timestamp(),
+           auto_hide_kind = case when v_emergency then 'emergency' else 'threshold' end
+     where c.id = v_case.id;
+    insert into private.audit_logs (actor_id, action, target_type, target_id, case_id, reason)
+    values (null, 'auto_hide:' || case when v_emergency then 'emergency' else 'threshold' end,
+            v_case.target_type, v_case.target_id::text, v_case.id,
+            '자동 임시 숨김 — 운영자 검토 대기 (회원 제재 아님)');
   end if;
   return new;
 end $$;
@@ -210,6 +269,92 @@ drop trigger if exists reports_auto_hide on private.reports;
 create trigger reports_auto_hide
   after insert on private.reports
   for each row execute function private.apply_report_auto_hide();
+
+-- ------------------------------------------------------------
+-- 4. 자동숨김 사건의 복구·종결 (REQUIRED-012-4)
+--    moderate_content('restore') 후 close_case('dismissed')를 따로 호출하면
+--    그 사이에 새 신고가 들어와 다시 숨겨지는 경합이 생긴다. 특히 emergency가
+--    true로 남아 있으면 일반 신고 한 건에도 재숨김된다.
+--    → 복구와 종결을 한 트랜잭션으로 처리하는 전용 RPC.
+--    이미 처리된 사건은 예외 없이 멱등 수렴한다.
+-- ------------------------------------------------------------
+create or replace function public.resolve_auto_hidden_case(
+  p_case_id bigint, p_decision text, p_reason text)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare
+  v_role text;
+  v_case private.moderation_cases%rowtype;
+  v_post bigint;
+begin
+  select m.role into v_role from private.members m
+   where m.id = auth.uid() and m.verification_status = 'verified' and m.sanction = 'none';
+  if v_role is null or v_role not in ('moderator','operator','owner') then
+    raise exception 'not allowed';
+  end if;
+  if p_decision not in ('restore','keep_hidden') then raise exception 'invalid decision'; end if;
+  if p_reason is null or btrim(p_reason) = '' then raise exception 'reason required'; end if;
+
+  select * into v_case from private.moderation_cases c where c.id = p_case_id for update;
+  if v_case.id is null then raise exception 'not found'; end if;
+  if v_case.status <> 'open' then
+    return jsonb_build_object('status','already_resolved','case_status',v_case.status);  -- 멱등
+  end if;
+
+  if p_decision = 'restore' then
+    if v_case.target_type = 'post' then
+      update public.posts p set hidden_at = null where p.id = v_case.target_id and p.hidden_at is not null;
+    else
+      update public.comments c set hidden_at = null
+       where c.id = v_case.target_id and c.hidden_at is not null and c.deleted_at is null
+      returning c.post_id into v_post;
+      -- 실제 복구된 경우에만 정확히 1회 증가
+      if v_post is not null then
+        update public.posts p set comment_count = p.comment_count + 1 where p.id = v_post;
+      end if;
+    end if;
+    -- 재숨김 방지: 긴급 플래그와 자동숨김 흔적을 함께 내린다
+    update private.moderation_cases c
+       set status = 'dismissed', closed_at = clock_timestamp(), closed_by = auth.uid(),
+           emergency = false, auto_hidden_at = null, auto_hide_kind = null
+     where c.id = p_case_id;
+  else
+    update private.moderation_cases c
+       set status = 'resolved', closed_at = clock_timestamp(), closed_by = auth.uid()
+     where c.id = p_case_id;
+  end if;
+
+  insert into private.moderation_actions (case_id, action, actor_id, reason)
+  values (p_case_id, case when p_decision = 'restore' then 'restore' else 'hide' end, auth.uid(), p_reason);
+  insert into private.audit_logs (actor_id, action, target_type, target_id, case_id, reason)
+  values (auth.uid(), 'auto_hide_review:' || p_decision, v_case.target_type,
+          v_case.target_id::text, p_case_id, p_reason);
+
+  return jsonb_build_object('status','ok','decision',p_decision);
+end $$;
+revoke execute on function public.resolve_auto_hidden_case(bigint, text, text)
+  from public, anon, authenticated;
+grant  execute on function public.resolve_auto_hidden_case(bigint, text, text) to authenticated;
+
+-- ------------------------------------------------------------
+-- 5. 기존 카운터 드리프트 1회 재계산 (REQUIRED-012-5)
+--    greatest(...,0)은 런타임 음수만 막고 과거에 어긋난 값은 복구하지 못한다.
+--    기존 post_votes는 value 기본값 1로 이관되므로 여기서 실제 행 수로 맞춘다.
+-- ------------------------------------------------------------
+update public.posts p
+   set vote_count = coalesce(v.up, 0),
+       down_count = coalesce(v.down, 0)
+  from (select pv.post_id,
+               count(*) filter (where pv.value = 1)  up,
+               count(*) filter (where pv.value = -1) down
+          from public.post_votes pv group by pv.post_id) v
+ where v.post_id = p.id
+   and (p.vote_count is distinct from coalesce(v.up, 0)
+     or p.down_count is distinct from coalesce(v.down, 0));
+
+-- 투표 행이 하나도 없는 글은 카운터가 0이어야 한다
+update public.posts p set vote_count = 0, down_count = 0
+ where (p.vote_count <> 0 or p.down_count <> 0)
+   and not exists (select 1 from public.post_votes pv where pv.post_id = p.id);
 
 commit;
 

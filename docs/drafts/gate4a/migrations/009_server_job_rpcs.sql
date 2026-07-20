@@ -347,13 +347,16 @@ begin
   end if;
   -- 정확히 '<member_id>/' prefix 아래 객체만 반환. 비정상 경로(.., 선행 slash, 빈 값)는 제외.
   --   bucket 이름은 DB가 다루지 않고 서버 모듈이 고정 문자열 'verification-docs'로만 사용한다.
+  --   LIMIT 201 — 서버가 201개면 too_many_verification_paths로 fail-closed(조용한 절단으로 남은 파일이
+  --   있는데 Auth 삭제되는 사고 방지). 현 규모엔 회원당 파일이 소수라 실질 상한.
   return query
   select r.id, r.storage_path from private.verification_requests r
    where r.member_id = p_member_id
      and r.storage_path is not null and length(r.storage_path) > 0
      and r.storage_path like (p_member_id::text || '/%')
      and r.storage_path not like '%..%'
-     and left(r.storage_path, 1) <> '/';
+     and left(r.storage_path, 1) <> '/'
+   limit 201;
 end $$;
 create or replace function public.get_member_verification_paths(p_member_id uuid)
 returns table(req_id bigint, storage_path text)
@@ -363,11 +366,14 @@ $$;
 revoke execute on function public.get_member_verification_paths(uuid) from public, anon, authenticated;
 grant  execute on function public.get_member_verification_paths(uuid) to service_role;
 
--- D-3. Auth Admin 삭제 후 수렴 확인: members 행이 사라졌으면 true (auth.users cascade 결과).
+-- D-3. Auth Admin 삭제 후 수렴 확인. members 부재만으로는 부족(비정상 시 members만 사라지고
+--   auth.users가 남을 수 있음) → auth.users 부재 AND members 부재의 AND로 판정(GPT 강화).
+--   definer(postgres 소유)라 auth.users 조회 가능.
 create or replace function private.account_deletion_converged(p_member_id uuid)
 returns boolean language plpgsql security definer set search_path='' as $$
 begin
-  return not exists (select 1 from private.members where id = p_member_id);
+  return not exists (select 1 from auth.users u where u.id = p_member_id)
+     and not exists (select 1 from private.members m where m.id = p_member_id);
 end $$;
 create or replace function public.account_deletion_converged(p_member_id uuid)
 returns boolean language sql security definer set search_path='' as $$
@@ -375,6 +381,29 @@ returns boolean language sql security definer set search_path='' as $$
 $$;
 revoke execute on function public.account_deletion_converged(uuid) from public, anon, authenticated;
 grant  execute on function public.account_deletion_converged(uuid) to service_role;
+
+-- D-4. 계정 삭제 전용 메타 정리 — request가 "현재 삭제 중인 그 회원" 소유일 때만 파기 표시.
+--   서버 코드의 ID 혼선이 다른 회원의 인증 메타를 지우는 사고를 막는다(GPT 강화).
+--   반환 boolean: 처리 후 그 회원의 해당 request가 purged 상태면 true(멱등 재실행도 true),
+--   소유 불일치·비-deleting이면 false → 서버는 Auth 삭제로 진행하지 않음.
+--   (일반 문서 파기용 mark_verification_doc_purged(bigint)와 분리 — 계정삭제 전용.)
+create or replace function private.mark_member_verification_doc_purged(p_req_id bigint, p_member_id uuid)
+returns boolean language plpgsql security definer set search_path='' as $$
+begin
+  update private.verification_requests r
+     set storage_path = null, real_name = null, purged_at = coalesce(r.purged_at, now()), purge_last_error = null
+   where r.id = p_req_id and r.member_id = p_member_id and r.purged_at is null
+     and exists (select 1 from private.members m
+                 where m.id = p_member_id and m.verification_status = 'deleting');
+  return exists (select 1 from private.verification_requests r
+                 where r.id = p_req_id and r.member_id = p_member_id and r.purged_at is not null);
+end $$;
+create or replace function public.mark_member_verification_doc_purged(p_req_id bigint, p_member_id uuid)
+returns boolean language sql security definer set search_path='' as $$
+  select private.mark_member_verification_doc_purged(p_req_id, p_member_id);
+$$;
+revoke execute on function public.mark_member_verification_doc_purged(bigint, uuid) from public, anon, authenticated;
+grant  execute on function public.mark_member_verification_doc_purged(bigint, uuid) to service_role;
 
 -- ------------------------------------------------------------
 -- 최종 sweep: 009가 새로 만든 private 함수의 PUBLIC/anon/authenticated/service_role EXECUTE 회수.
@@ -392,7 +421,8 @@ begin
                'record_verification_purge_failure','claim_expired_uploads',
                'run_stale_review_notifications','expire_unreviewed_submissions',
                'claim_accounts_for_deletion','get_member_verification_paths',
-               'account_deletion_converged','prepare_account_deletion')
+               'account_deletion_converged','mark_member_verification_doc_purged',
+               'prepare_account_deletion')
   loop
     execute format('revoke execute on function private.%I(%s) from public, anon, authenticated, service_role',
                    r.proname, r.args);

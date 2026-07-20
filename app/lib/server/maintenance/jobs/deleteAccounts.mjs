@@ -61,11 +61,21 @@ export async function deleteAccounts(ctx) {
         continue;
       }
 
-      // 7: Storage 성공 후 DB 메타(경로·실명) 정리 — 실패하면 Auth 금지
+      // 7: Storage 성공 후 DB 메타(경로·실명) 정리 — 회원 결속 RPC로 "이 회원 소유+deleting"일 때만.
+      //    반환 boolean이 true(파기 확정)가 아니면 Auth 금지(ID 혼선으로 타 회원 메타 삭제 방지).
       let metaOk = true;
       for (const p of paths) {
         try {
-          await callRpc(client, "mark_verification_doc_purged", { p_req_id: p && p.req_id }, "mark");
+          const purged = await callRpc(
+            client,
+            "mark_member_verification_doc_purged",
+            { p_req_id: p && p.req_id, p_member_id: memberId },
+            "mark"
+          );
+          if (purged !== true) {
+            metaOk = false;
+            break;
+          }
         } catch {
           metaOk = false;
           break;

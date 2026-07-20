@@ -126,7 +126,7 @@ function daClient(over = {}, storageImpl) {
     prepare_account_deletion: () => ({ data: null, error: null }),
     detach_member_content: () => ({ data: null, error: null }),
     get_member_verification_paths: () => ({ data: [{ req_id: 1, storage_path: `${UUID}/a` }], error: null }),
-    mark_verification_doc_purged: () => ({ data: null, error: null }),
+    mark_member_verification_doc_purged: () => ({ data: true, error: null }),
     account_deletion_converged: () => ({ data: true, error: null }),
     record_maintenance_run: () => ({ data: null, error: null }),
   };
@@ -147,10 +147,10 @@ test("delete: 신규 정상 순서 → processed 1, 호출 순서 보장", async
   const idx = (n) => seq.indexOf(n);
   assert.ok(idx("prepare_account_deletion") < idx("detach_member_content"));
   assert.ok(idx("detach_member_content") < idx("get_member_verification_paths"));
-  assert.ok(idx("get_member_verification_paths") < idx("mark_verification_doc_purged"));
+  assert.ok(idx("get_member_verification_paths") < idx("mark_member_verification_doc_purged"));
   assert.equal(auth.calls.length, 1);
-  assert.ok(idx("mark_verification_doc_purged") >= 0 && auth.calls.length === 1); // mark 후 auth
-  assert.ok(idx("account_deletion_converged") > idx("mark_verification_doc_purged"));
+  assert.ok(idx("mark_member_verification_doc_purged") >= 0 && auth.calls.length === 1); // mark 후 auth
+  assert.ok(idx("account_deletion_converged") > idx("mark_member_verification_doc_purged"));
 });
 
 test("delete: deleting 재개도 동일 순서로 수렴", async () => {
@@ -195,15 +195,33 @@ test("delete: 일부 Storage 실패 → 메타정리·Auth 0회", async () => {
   const auth = mkAuth(true);
   const r = await deleteAccounts(ctx(client, auth));
   assert.equal(r.failed, 1);
-  assert.equal(only(client.calls, "mark_verification_doc_purged").length, 0);
+  assert.equal(only(client.calls, "mark_member_verification_doc_purged").length, 0);
   assert.equal(auth.calls.length, 0);
 });
 
 test("delete: Storage 전부 성공 후 메타정리 실패 → Auth 0회", async () => {
-  const client = daClient({ mark_verification_doc_purged: () => ({ data: null, error: { message: "x" } }) }, () => ({ error: null }));
+  const client = daClient({ mark_member_verification_doc_purged: () => ({ data: null, error: { message: "x" } }) }, () => ({ error: null }));
   const auth = mkAuth(true);
   const r = await deleteAccounts(ctx(client, auth));
   assert.equal(r.failed, 1);
+  assert.equal(auth.calls.length, 0);
+});
+
+test("delete: 메타정리 회원 불일치(false 반환) → Auth 0회", async () => {
+  const client = daClient({ mark_member_verification_doc_purged: () => ({ data: false, error: null }) }, () => ({ error: null }));
+  const auth = mkAuth(true);
+  const r = await deleteAccounts(ctx(client, auth));
+  assert.equal(r.failed, 1);
+  assert.equal(auth.calls.length, 0);
+});
+
+test("delete: 경로 201개(too_many) → Storage·메타·Auth 0회(fail-closed)", async () => {
+  const many = Array.from({ length: 201 }, (_, i) => ({ req_id: i + 1, storage_path: `${UUID}/f${i}` }));
+  const client = daClient({ get_member_verification_paths: (a, i) => ({ data: i === 1 ? many : [], error: null }) }, () => ({ error: null }));
+  const auth = mkAuth(true);
+  const r = await deleteAccounts(ctx(client, auth));
+  assert.equal(r.failed, 1);
+  assert.equal(only(client.calls, "mark_member_verification_doc_purged").length, 0);
   assert.equal(auth.calls.length, 0);
 });
 

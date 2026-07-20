@@ -175,11 +175,11 @@ begin
   new.updated_at := now();
   return new;
 end $$;
-create trigger posts_before_update before update on public.posts
-  for each row when (pg_trigger_depth() = 0)   -- definer 내부 update(숨김·탈퇴)는 미간섭
-  execute function private.on_post_update();
--- 주: pg_trigger_depth 조건은 "클라이언트 직접 UPDATE"에만 규칙을 적용하기 위한 것.
---   definer 함수는 별도 경로로 감사·검증을 수행. dev 리허설에서 동작 확인 항목.
+-- r3 (GPT 3차 §1): pg_trigger_depth 폐기 — 작성자 변경 가능 컬럼에만 트리거를 건다.
+-- hidden_at·author_withdrawn_at·카운터만 바꾸는 definer 작업에는 아예 발동하지 않음
+-- → soft-delete된 콘텐츠에도 탈퇴 파이프라인이 author_withdrawn_at을 안전하게 설정 가능.
+create trigger posts_before_update before update of title, body, deleted_at on public.posts
+  for each row execute function private.on_post_update();
 
 create or replace function private.on_comment_insert()
 returns trigger language plpgsql security definer set search_path = '' as $$
@@ -227,9 +227,8 @@ begin
   new.updated_at := now();
   return new;
 end $$;
-create trigger comments_before_update before update on public.comments
-  for each row when (pg_trigger_depth() = 0)
-  execute function private.on_comment_update();
+create trigger comments_before_update before update of body, deleted_at on public.comments
+  for each row execute function private.on_comment_update();
 
 create or replace function private.on_vote_change()
 returns trigger language plpgsql security definer set search_path = '' as $$
@@ -371,12 +370,13 @@ begin
     and m.nickname is not null and m.verification_status = 'verified'
     and m.sanction in ('none','write_restricted');                  -- 신고는 write_restricted도 가능 (권한표)
   if not found then raise exception 'not allowed'; end if;
+  -- r3 (GPT 3차 §2): 신고 대상도 호출자 가시성 기준으로 검증
   if p_target_type = 'post' then
-    v_ok := exists (select 1 from public.posts p where p.id = p_target_id
-                    and p.deleted_at is null and p.hidden_at is null);
+    v_ok := authz.post_visible_to_me(p_target_id);
   elsif p_target_type = 'comment' then
     v_ok := exists (select 1 from public.comments c where c.id = p_target_id
-                    and c.deleted_at is null and c.hidden_at is null);
+                    and c.deleted_at is null and c.hidden_at is null
+                    and authz.post_visible_to_me(c.post_id));
   else raise exception 'invalid type'; end if;
   if not v_ok then raise exception 'not reportable'; end if;
   if char_length(coalesce(p_detail,'')) > 500 then raise exception 'detail too long'; end if;

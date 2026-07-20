@@ -12,7 +12,9 @@
 | migrations/002_foundation.sql | supabase/migrations/002_foundation.sql | §1 표(테이블 21종), §3(members), §4.3(requests), §5(커뮤니티), §10(인덱스·CHECK), §0(시드) |
 | migrations/003_functions_triggers.sql | supabase/migrations/003_functions_triggers.sql | §2 트랙 A/B, §3~§6, §8, §13 — **함수 의존 RLS 정책 포함** (아래 §4 참조) |
 | migrations/004_schedules.sql | supabase/migrations/004_schedules.sql | §9 pg_cron 4종 |
-| scripts/provision-storage.mjs | scripts/provision-storage.mjs | §7 버킷 프로비저닝 |
+| migrations/003b_functions_part2.sql | supabase/migrations/003에 병합 또는 003b 유지 (승격 시 결정) | §5.5·§6·§9·§13 |
+| migrations/005_storage_policies.sql | supabase/migrations/005_storage_policies.sql | §7 Storage 정책 (r3 신설 — 적용 순서: 001~004 → provision-storage → 005) |
+| scripts/provision-storage.mjs | scripts/provision-storage.mjs | §7 버킷 프로비저닝 (r3: --dry-run 기본·비교만·삭제 없음) |
 | scripts/server-jobs/ | app/api/maintenance/ (또는 app/lib/server/jobs/) | §9 서버 Cron 4종, §13 파이프라인 |
 | vercel.cron.example.json | (내용 확인 후 수동으로 vercel.json에 반영) | §9 — **실제 vercel.json은 수정하지 않음** |
 | tests/ | scripts/gate4a-tests/ | §10 보안 테스트 |

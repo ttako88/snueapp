@@ -14,11 +14,13 @@ create extension if not exists pg_cron;
 -- 각 배치 함수는 003b에서 정의 — idempotent·배치 상한·실패 로그 공통 규칙(§9)
 -- r2 (GPT 2차 §7): 재적용 시 중복 job 방지 — 동일 이름 기존 job을 먼저 제거
 do $$
-declare j text;
+declare r record;
 begin
-  foreach j in array array['expire_sanctions','purge_soft_deleted_content',
-                           'purge_expired_holds','purge_expired_guest_reads'] loop
-    perform cron.unschedule(j) from cron.job where jobname = j;
+  for r in select jobid from cron.job
+           where jobname in ('expire_sanctions','purge_soft_deleted_content',
+                             'purge_expired_holds','purge_expired_guest_reads')
+  loop
+    perform cron.unschedule(r.jobid);   -- 존재하는 job만 — 부재 시 실패 없음 (r3)
   end loop;
 end $$;
 -- r2: 아래 시각은 "DB cron timezone=UTC" 가정의 KST 환산값 — dev에서 실제 timezone 확인 후 고정 (TODO)

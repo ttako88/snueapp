@@ -15,8 +15,15 @@
 - **GATE3_DESIGN.md v1.3 커밋 (dacd7a8)** — Gate 3 설계 확정 완료.
 - GATE4A_PLAN.md 초안 v0.1 작성 → GPT 검수 요청, 대기 중.
 
+- GATE4A_PLAN.md 초안 v0.1 → GPT "수정 후 자동 승인" 6건(승인 2단계 분리/동결 SHA만 운영 적용/백업·초기화 구체화/서버 Cron 실행부 보완/부트스트랩→smoke 순서/P3 차단 축소) → 전부 반영, **v0.2 커밋 (bdfa218)**. 상태: "4a 계획 승인 · 실행 승인 대기".
+- Claude 제안 "Gate 4a 산출물 초안 파일 작성(실행 0건)" → GPT **진행 승인** (조건: 비활성 경로 docs/drafts/gate4a/, DRAFT_MANIFEST 우선, 실행·push·env·실값 금지, 배치 검수 001·002 → 003·004 → 서버 잡).
+- 초안 일체 작성·커밋 (c0dd165): MANIFEST, TEST_CONTRACT(51케이스 todo), 001~004 SQL, provision-storage, server-jobs 계약, vercel.cron 예시.
+- 001·002 전문 GPT 배치 검수 제출 → 검수 대기 중.
+
 ## 이견 로그 (이견 발생 → GPT안 채택 기록)
 - 실질적 이견 없음. GPT 보완 2건은 정책 변경이 아니라 실행 가능성·문구 정합 보완이라 그대로 수용 (보편적 패턴: private 로직 + public 최소 노출 래퍼는 Supabase 표준 관행).
+- **enforcement_holds.released_at 폐기 (GPT안 채택, v1.3 문서와 다름)**: v1.3 설계는 released_at 컬럼+partial unique였으나, GPT가 "해제된 hold의 HMAC이 불필요하게 잔존 — 만료·수동 해제 모두 행 hard delete, 테이블에는 활성 hold만"을 권고. 개인정보 최소화의 보편 원칙이라 채택. 해제 사실은 HMAC 없는 audit log로만. (기상 후 GATE3_DESIGN에 v1.3.1 주석 반영 여부만 확인하면 됨 — 실질 내용은 draft DDL에 반영 완료)
+- **posts·comments 컬럼 단위 GRANT (GPT안 채택)**: 테이블 단위 insert/update보다 컬럼 단위가 트리거 의존을 줄임 — 표준 최소권한 패턴이라 채택.
 
 ## 산출물
 - docs/GATE3_DESIGN.md **v1.3 확정·승인·커밋 (dacd7a8)**

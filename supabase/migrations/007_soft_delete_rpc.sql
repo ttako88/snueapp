@@ -15,14 +15,18 @@ revoke update (deleted_at) on public.posts    from authenticated;
 revoke update (deleted_at) on public.comments from authenticated;
 
 -- 2. 소프트 삭제 RPC (definer — RLS 우회, 함수 내부 소유권+writable 검증)
+-- 불변조건(GPT 3차 검수): authenticated만 EXECUTE / auth.uid()로만 행위자 판정(id 인자 금지) /
+--   is_writable_member() / owners 소유권 / deleted_at is null 행만 / 삭제시각 clock_timestamp() /
+--   존재하지않음·타인·이미삭제는 동일한 no-op(void 반환, 존재정보·본문 미노출) /
+--   comment_count는 "현재 공개 댓글 수" — 최초 삭제 성공 시 1회만 감소.
 create or replace function public.soft_delete_post(p_post_id bigint)
 returns void language plpgsql security definer set search_path='' as $$
 begin
   if not authz.is_writable_member() then raise exception 'not allowed'; end if;
-  update public.posts p set deleted_at = now(), updated_at = now()
+  -- 본인 소유 + 미삭제 행만 삭제. 아니면 아무 일도 하지 않음(no-op) — 존재 정보 비노출
+  update public.posts p set deleted_at = clock_timestamp(), updated_at = clock_timestamp()
     where p.id = p_post_id and p.deleted_at is null
       and exists (select 1 from public.post_owners o where o.post_id = p.id and o.user_id = auth.uid());
-  if not found then raise exception 'not owner or already deleted'; end if;
 end $$;
 revoke execute on function public.soft_delete_post(bigint) from public, anon, authenticated;
 grant  execute on function public.soft_delete_post(bigint) to authenticated;
@@ -32,12 +36,14 @@ returns void language plpgsql security definer set search_path='' as $$
 declare v_post bigint;
 begin
   if not authz.is_writable_member() then raise exception 'not allowed'; end if;
-  select post_id into v_post from public.comments where id = p_comment_id;
-  update public.comments c set deleted_at = now(), updated_at = now()
+  -- 본인 소유+미삭제 행만. update가 실제 1행 삭제했을 때만 comment_count 1회 감소(중복 감소 방지)
+  update public.comments c set deleted_at = clock_timestamp(), updated_at = clock_timestamp()
     where c.id = p_comment_id and c.deleted_at is null
-      and exists (select 1 from public.comment_owners o where o.comment_id = c.id and o.user_id = auth.uid());
-  if not found then raise exception 'not owner or already deleted'; end if;
-  update public.posts pp set comment_count = greatest(pp.comment_count - 1, 0) where pp.id = v_post;
+      and exists (select 1 from public.comment_owners o where o.comment_id = c.id and o.user_id = auth.uid())
+    returning c.post_id into v_post;
+  if v_post is not null then
+    update public.posts pp set comment_count = greatest(pp.comment_count - 1, 0) where pp.id = v_post;
+  end if;
 end $$;
 revoke execute on function public.soft_delete_comment(bigint) from public, anon, authenticated;
 grant  execute on function public.soft_delete_comment(bigint) to authenticated;

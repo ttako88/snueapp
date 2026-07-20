@@ -1,5 +1,5 @@
 -- ============================================================
--- 006_harden_private_exec.sql — private 함수 PUBLIC EXECUTE 심층방어 보강
+-- 008_harden_private_exec.sql (최종 심층방어 sweep — 모든 함수 생성 후) — private 함수 PUBLIC EXECUTE 심층방어 보강
 -- PROMOTED for dev rehearsal (dev 검증 2026-07-20)
 -- 배경: 001의 `alter default privileges in schema private revoke execute ... from public`이
 --   명시적 revoke를 하지 않은 private 내부 함수(actor_role_check, *_impl, content_author 등)의

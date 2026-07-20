@@ -164,21 +164,17 @@ end $$;
 create trigger posts_after_insert after insert on public.posts
   for each row execute function private.on_post_after_insert();
 
--- deleted_at 규칙 (GPT 2차 §4): NULL → DB 현재 시각 전이만. 복구·재삭제·임의 시각 금지
+-- r4 (007/008 정리): soft delete는 definer RPC(soft_delete_post) 전담이므로 트리거는
+-- title/body 수정 시 updated_at만 갱신. deleted_at 전이 로직 제거(클라이언트 deleted_at
+-- update 권한도 007에서 제거됨). 삭제된 글의 본문 수정은 계속 금지.
 create or replace function private.on_post_update()
 returns trigger language plpgsql security definer set search_path = '' as $$
 begin
   if old.deleted_at is not null then raise exception 'already deleted'; end if;
-  if new.deleted_at is distinct from old.deleted_at then
-    new.deleted_at := now();               -- NULL→now() 전이만 (컬럼 권한이 나머지 보호)
-  end if;
   new.updated_at := now();
   return new;
 end $$;
--- r3 (GPT 3차 §1): pg_trigger_depth 폐기 — 작성자 변경 가능 컬럼에만 트리거를 건다.
--- hidden_at·author_withdrawn_at·카운터만 바꾸는 definer 작업에는 아예 발동하지 않음
--- → soft-delete된 콘텐츠에도 탈퇴 파이프라인이 author_withdrawn_at을 안전하게 설정 가능.
-create trigger posts_before_update before update of title, body, deleted_at on public.posts
+create trigger posts_before_update before update of title, body on public.posts
   for each row execute function private.on_post_update();
 
 create or replace function private.on_comment_insert()
@@ -216,18 +212,16 @@ end $$;
 create trigger comments_after_insert after insert on public.comments
   for each row execute function private.on_comment_after_insert();
 
+-- r4: soft delete는 soft_delete_comment RPC 전담(comment_count 감소도 RPC가 수행).
+-- 트리거는 body 수정 시 updated_at만.
 create or replace function private.on_comment_update()
 returns trigger language plpgsql security definer set search_path = '' as $$
 begin
   if old.deleted_at is not null then raise exception 'already deleted'; end if;
-  if new.deleted_at is distinct from old.deleted_at then
-    new.deleted_at := now();
-    update public.posts set comment_count = greatest(comment_count - 1, 0) where id = new.post_id;
-  end if;
   new.updated_at := now();
   return new;
 end $$;
-create trigger comments_before_update before update of body, deleted_at on public.comments
+create trigger comments_before_update before update of body on public.comments
   for each row execute function private.on_comment_update();
 
 create or replace function private.on_vote_change()

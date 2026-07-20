@@ -40,5 +40,16 @@
 - 이 로그 파일
 
 ## 기상 후 사용자 확인 필요 (질문 목록)
-1. **SNUE 학번 형식** (자릿수·구조) — §4.1 학번 정규화 규칙 확정에 필요, Gate 4a 전 확인 항목.
-2. **Gate 4a 착수 승인** — dev 리허설 시작 여부 (운영 초기화는 그 뒤 별도 재확인 단계 있음).
+1. ✅ **SNUE 학번 형식** — 8자리(입학년도4+학과코드2+개인번호2) 확인 완료, §4.1 반영.
+2. ✅ **Gate 4a 착수 승인** — 승인됨, dev 리허설 진행 완료.
+
+## Gate 4a dev 리허설 진척 (2026-07-20, 오푸스 전환 후 계속)
+- **마이그레이션 001~007 dev 적용 완료** + verification-docs 버킷 생성(private·10MB·MIME) + auth 트리거 실측 통과.
+- **§10 보안 테스트 59/59 PASS** (그룹 M/R/F/A/V/D/P/W/G/X). fixture 11계정을 auth.users 직접 insert로 생성(트리거 자동 members), authenticated/anon/service_role 컨텍스트 시뮬레이션. postcondition 판정, 증거는 private._test_results.
+- **실결함 3건 발견·수정** (전부 마이그레이션 반영+dev 재검증):
+  1. 006 — private 함수 PUBLIC EXECUTE 잔존(심층방어). 
+  2. 003 — claim_guest_read view_count 모호성(미리보기 운영 실패했을 버그).
+  3. **007 — 소프트 삭제 RLS 구조결함(가장 심각: 사용자가 자기 글 삭제 불가)**. posts_select의 `deleted_at is null`과 RLS UPDATE 가시성 상호작용. definer RPC(soft_delete_post/comment)로 전환. **GATE3 §5.2 문서를 v1.4로 조정 필요(soft delete=RPC 경로)** — 기상 후 문서 반영 예정.
+- 커밋: 9bee90c(M/R/F/A+006), 1185d4d(V/D/P+003), e39bdf9(W/G/X+007).
+- **다음**: GPT 검수(3건 수정 방향+단계 B 진입 여부) → 승인 시 단계 B(산출물 동결·SHA·결과표 보고) → 운영 적용은 B-10 별도 승인.
+- ⚠️ **GATE3_DESIGN.md v1.4 반영 대기**: §4.1 학번 8자리, §5.2 soft delete를 definer RPC로. (dev draft/마이그레이션엔 이미 반영, 설계문서 동기화만 남음)

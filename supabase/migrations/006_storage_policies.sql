@@ -1,5 +1,5 @@
 -- ============================================================
--- 005_storage_policies.sql  (신설 — GPT 3차 검수 확정: Storage 접근 경계 분리)
+-- 006_storage_policies.sql  (신설 — GPT 3차 검수 확정: Storage 접근 경계 분리)
 -- PROMOTED for dev rehearsal (P2 승인 2026-07-20) — 운영 적용은 dev 전 항목 통과+B-10 승인 후
 -- 적용 순서: 001~004 → provision-storage(버킷 생성) → 005 (버킷 존재가 전제)
 -- 원칙: 이 파일은 storage 객체를 SQL로 삽입·수정·삭제하지 않는다 — 정책만 관리 (§7)

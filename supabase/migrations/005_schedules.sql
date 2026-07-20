@@ -1,5 +1,5 @@
 -- ============================================================
--- 004_schedules.sql
+-- 005_schedules.sql
 -- PROMOTED for dev rehearsal (P2 승인 2026-07-20) — 운영 적용은 dev 전 항목 통과+B-10 승인 후
 -- 근거: GATE3_DESIGN.md v1.3 §9 — pg_cron은 DB 내부 작업만.
 -- Storage/Auth API가 필요한 작업(인증원본 파기·계정 삭제·업로드 미완 정리·장기 미처리)은

@@ -80,8 +80,22 @@
 - 대상 확인: dev ref `uiikgqeoxocpvphlmoqp`(snueapp-dev), 운영 `jclwkvxbvsegmbcnptpi`와 상이. 합성 fixture만.
 - **`private._test_results` 테이블 RLS 경고 모달**: private 스키마 미노출(anon/authenticated USAGE 없음)·결과 읽기는 postgres 롤(RLS 우회)이라 오탐 → "Run without RLS" 선택.
 
-## 6. 남은 것
-- **SHA 동결**: 본 clean replay 통과 시점 커밋(테스트 술어 교정 20_funcperm_block.sql 포함) = Gate 4a Stage B SQL 산출물 후보 SHA. (§10)
-- maintenance Route·서버 잡 4종(Vercel Cron) 실코드 = Gate 4a 서버부 (DEFERRED)
-- Stage B 산출물 동결 → (별도 B-10 승인) 운영 적용 → 서버부(Route/잡) → OAuth(Gate 4b)
+## 6. Stage B 동결 확정 (GPT 최종 승인 — 2026-07-20)
+
+**동결 SHA: `6746127` (674612723a7b50dda59cbaa97010dda2e911ee5e)**
+
+> 상태 문구(고정): "Gate 4a Stage B DB/SQL 산출물 SHA 6746127 동결 — dev clean replay 66/66 PASS.
+> maintenance Route 및 서버 작업 4종과 Vercel Cron HTTP 검증은 DEFERRED. Gate 4a 전체 완료는 아님."
+
+- GPT 2차 검수 요구(G/X 보강·술어 엄격화) 반영 후 **66/66 PASS** → GPT "최종 동결본으로 승인, 추가 대응표·전체 재실행 불요".
+- 이전 후보 **867bf9a = superseded** (동결 기준으로 사용 금지). 동결 SQL 수정 필요 결함 발견 시 새 SHA + 영향 테스트 필수.
+- 남은 것: (별도 B-10 승인) 운영 적용 → 서버부(maintenance Route·Cron HTTP, DEFERRED) → OAuth(Gate 4b).
+
+## 7. 후속 기능 4건 (사용자 직접 승인 · GPT 착수 허가 · Stage B와 분리)
+GPT 권장 순서로 **별도 작업 단위·별도 커밋**, 기존 동작 기본값 보존, 구현 전 현행 데이터/UI 확인, 완료 후 검증 기록, Gate 4a SQL 미변경 diff 확인:
+1. 게시판 설명 중립화(표시 문구만, 접근권한 불변)
+2. 캘린더 일정 종류별 표시 토글(삭제 아님·재접속 보존·현재 표시 기본값)
+3. 강의마법사 세부 강의·분반 선택(전체선택 유지+개별해제+indeterminate, 선택 분반만 등록)
+4. 시간표 사용자 정의 일정 수기입력(공식 강의와 별도 저장·소유/수정/삭제 경계 선설계, 시각 구분·동시표시)
+
 - GATE3_DESIGN v1.4: §4.1·§5.2 ✅ / comment_count 규칙 문서 문단은 후속

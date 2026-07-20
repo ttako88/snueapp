@@ -39,9 +39,9 @@ tests/<기능>.test.mjs         ← node --test
 | 강의조회 `courseSearch` | ✅ 켜짐 | 불필요 | 없음 — 즉시 동작 (2022~2026 8개 학기) |
 | 강의평가 `courseReview` | 🟡 DB 초안 | 필요 (`pending/010`) | Gate 4a 배포 + GPT 검수 + dev 리허설 |
 | 게시판 공지 고정 `boardNotice` | 🟡 DB 완료 | 필요 (`pending/011`) | Gate 4a 배포 (화면은 미작성) |
-| 추천/반대 `postVote` | 🔲 대기 | 필요 | Gate 4a 배포 |
-| 스크랩 `bookmark` | 🔲 대기 | 필요 | Gate 4a 배포 |
-| 신고 `report` | 🔲 대기 | 필요 | Gate 4a 배포 |
+| 추천/반대 `postVote` | 🟡 DB 완료 | 필요 (`pending/012`) | Gate 4a 배포 (화면 미작성) |
+| 스크랩 `bookmark` | 🟡 DB 완료 | 필요 (`pending/012`) | Gate 4a 배포 (화면 미작성) |
+| 신고 `report` | 🟡 DB 완료 | 필요 (`pending/012`) | Gate 4a 배포 (화면 미작성) |
 | 식권 마켓 `mealTicketMarket` | 🔲 대기 | 필요 | Gate 4a 배포 |
 | 소셜 로그인 `socialLogin` | 🔲 대기 | 불필요 | Gate 4a 배포 + 키 발급 |
 

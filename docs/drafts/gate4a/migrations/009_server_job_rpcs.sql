@@ -88,8 +88,12 @@ grant  execute on function public.claim_verification_docs_to_purge(int) to servi
 create or replace function private.mark_verification_doc_purged(p_req_id bigint)
 returns void language plpgsql security definer set search_path='' as $$
 begin
+  -- purge_started_at도 함께 보장(CHECK: purged_at 설정 시 purge_started_at 필수).
+  --   purge job은 claim이 선행 설정하지만, 방어적으로 coalesce로 확정.
   update private.verification_requests
-     set storage_path = null, real_name = null, purged_at = now(), purge_last_error = null
+     set storage_path = null, real_name = null,
+         purge_started_at = coalesce(purge_started_at, now()),
+         purged_at = now(), purge_last_error = null
    where id = p_req_id and purged_at is null;
 end $$;
 create or replace function public.mark_verification_doc_purged(p_req_id bigint)
@@ -390,8 +394,11 @@ grant  execute on function public.account_deletion_converged(uuid) to service_ro
 create or replace function private.mark_member_verification_doc_purged(p_req_id bigint, p_member_id uuid)
 returns boolean language plpgsql security definer set search_path='' as $$
 begin
+  -- 계정삭제 경로는 claim이 선행하지 않으므로 purge_started_at을 함께 확정(CHECK 충족).
   update private.verification_requests r
-     set storage_path = null, real_name = null, purged_at = coalesce(r.purged_at, now()), purge_last_error = null
+     set storage_path = null, real_name = null,
+         purge_started_at = coalesce(r.purge_started_at, now()),
+         purged_at = coalesce(r.purged_at, now()), purge_last_error = null
    where r.id = p_req_id and r.member_id = p_member_id and r.purged_at is null
      and exists (select 1 from private.members m
                  where m.id = p_member_id and m.verification_status = 'deleting');

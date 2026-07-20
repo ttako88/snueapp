@@ -119,7 +119,7 @@ auth.users 생성 (가입)
 - 동시 제한: **uploading+submitted 합산 회원당 1건** (`unique (member_id) where status in ('uploading','submitted')`)
 - finalize ↔ 계정삭제·철회 경합: finalize와 삭제 파이프라인 모두 **member 행을 `for update` 잠금** 후 진행 — 삭제 중 finalize 불가, finalize 중 삭제 대기
 
-- 학번 정규화 규칙: trim, 내부 공백·하이픈 제거, 숫자만 허용, **허용 길이는 실제 SNUE 학번 형식 확인 후 확정 (Gate 4a 이전 확인 항목 — 임의 확정하지 않음)**, 비정상 입력 거부
+- 학번 정규화 규칙 (✅ 사용자 확인 2026-07-20): SNUE 학번 = **8자리 숫자** — 입학년도 4 + 학과코드 2 + 개인번호 2 (예: 20251423). 규칙: trim, 내부 공백·하이픈 제거, `^\d{8}$` 강제, 연도부(앞 4자리)는 1980~현재+1 범위 sanity check, 비정상 입력 거부
 - HMAC 응답 비반환. student_no_hmac 자료형: **hex text + `check (char_length(student_no_hmac)=64)`** (bytea 대비 JS 서버와의 왕복 단순 — 근거 명시). school_identities·enforcement_holds 동일 자료형
 - 유일성: **`unique (hmac_key_version, student_no_hmac)`** — 동시 승인 중복은 이 제약이 최종 차단(승인 트랜잭션 동시성 테스트 §10)
 

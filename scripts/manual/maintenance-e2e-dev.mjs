@@ -3,8 +3,6 @@
 // handleMaintenance를 직접 호출하면 auth 순서·disabled 게이트·secret·job·ref·lease·실제 RPC·
 // batch_runs·release까지 전부 실측된다(HTTP status = 반환 status). 12 시나리오.
 // 값(SUPABASE_SECRET_KEY·DEV_DB_URL)은 .env.dev.local에서만, 화면·로그 비출력.
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import pg from "pg";
 import { handleMaintenance } from "../../app/lib/server/maintenance/core.mjs";
@@ -12,18 +10,13 @@ import { createServiceClient } from "../../app/lib/server/maintenance/serviceCli
 import { withLease } from "../../app/lib/server/maintenance/lease.mjs";
 import { runJob } from "../../app/lib/server/maintenance/jobs/registry.mjs";
 import { LEASE_TTL_SEC, BUDGET_MS } from "../../app/lib/server/maintenance/config.mjs";
+import { readDevEnv, assertDevUrl, DEV_SUPABASE_URL, DEV_REF, scrub } from "./dev-url.mjs";
 
-const DEV_REF = "uiikgqeoxocpvphlmoqp", PROD_REF = "jclwkvxbvsegmbcnptpi";
-function envFile() {
-  const raw = readFileSync(resolve(process.cwd(), ".env.dev.local"), "utf8");
-  const get = (k) => (raw.match(new RegExp("^\\s*" + k + "\\s*=\\s*(.+)\\s*$", "m")) || [])[1]?.trim().replace(/^["']|["']$/g, "");
-  return { secret: get("SUPABASE_SECRET_KEY"), dbUrl: get("DEV_DB_URL") };
-}
-const { secret, dbUrl } = envFile();
+// 공용 검증기: 구조적 URL/ref 검증(단순 includes 폐기), 운영 ref 섞이면 즉시 중단.
+const { SUPABASE_SECRET_KEY: secret, DEV_DB_URL: dbUrl } = readDevEnv(["SUPABASE_SECRET_KEY", "DEV_DB_URL"]);
 if (!secret) throw new Error("SUPABASE_SECRET_KEY 없음");
-if (!dbUrl || !dbUrl.includes(DEV_REF) || dbUrl.includes(PROD_REF)) throw new Error("DEV_DB_URL 대상 오류");
-
-const SUPABASE_URL = `https://${DEV_REF}.supabase.co`;
+assertDevUrl(dbUrl, "DEV_DB_URL");
+const SUPABASE_URL = DEV_SUPABASE_URL;
 const CRON = randomBytes(24).toString("hex");
 const baseEnv = {
   SUPABASE_URL, SUPABASE_SECRET_KEY: secret, APP_ENV: "dev",
@@ -115,4 +108,4 @@ async function main() {
   console.log(`\n=== P0-7 E2E: ${passed}/${total} PASS ===`);
   process.exit(passed === total ? 0 : 2);
 }
-main().catch((e) => { console.error("[fail] " + (e.message || e)); process.exit(1); });
+main().catch((e) => { console.error("[fail] " + scrub(e.message || String(e), secret, dbUrl)); process.exit(1); });

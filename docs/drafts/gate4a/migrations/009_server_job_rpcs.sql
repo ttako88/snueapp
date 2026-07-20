@@ -33,13 +33,22 @@ create or replace function public.record_maintenance_run(
   p_job text, p_ok boolean, p_processed int, p_error_code text)
 returns void language plpgsql security definer set search_path='' as $$
 begin
+  -- 조용한 clamp 금지 — 범위 이탈은 배치 통계 오류를 숨기므로 명시적 거부.
   if p_job not in ('purge-verification-docs','delete-accounts','expire-uploads','stale-reviews') then
     raise exception 'unknown job';
   end if;
-  perform private.record_batch_run(
-    p_job, p_ok,
-    least(greatest(coalesce(p_processed, 0), 0), 1000000),          -- 0..1e6 클램프
-    left(coalesce(p_error_code, ''), 40));                          -- 비식별 짧은 코드만
+  if p_processed is null or p_processed < 0 or p_processed > 1000000 then
+    raise exception 'processed out of range';
+  end if;
+  if p_ok then
+    if p_error_code is not null then raise exception 'ok run must not carry error_code'; end if;
+  else
+    -- 실패 기록은 안전한 error_code 필수(공백·개행·경로·UUID·원문오류 차단 형식).
+    if p_error_code is null or p_error_code !~ '^[a-z0-9][a-z0-9_:-]{0,39}$' then
+      raise exception 'invalid error_code';
+    end if;
+  end if;
+  perform private.record_batch_run(p_job, p_ok, p_processed, p_error_code);
 end $$;
 revoke execute on function public.record_maintenance_run(text, boolean, int, text) from public, anon, authenticated;
 grant  execute on function public.record_maintenance_run(text, boolean, int, text) to service_role;
@@ -144,7 +153,7 @@ grant  execute on function public.claim_expired_uploads(int) to service_role;
 --   owner_warned_3_at/7_at = "운영진 경고 발송 완료" 표식(레거시 명칭). 발송+표식은 한 트랜잭션.
 create or replace function private.run_stale_review_notifications(p_limit int)
 returns int language plpgsql security definer set search_path='' as $$
-declare v_sent int := 0; r record;
+declare v_sent int := 0; r record; v_cnt int;
 begin
   for r in
     select vr.id, vr.member_id, vr.submitted_at,
@@ -156,22 +165,28 @@ begin
      limit greatest(p_limit, 0)
      for update skip locked
   loop
-    -- 7일 경고 (운영진) — 아직 미발송이면
+    -- 7일 경고 (운영진) — 아직 미발송이면. 실제 수신자가 1명 이상 생겼을 때만 발송 완료 표식.
     if r.submitted_at < now() - interval '7 days' and r.owner_warned_7_at is null then
       insert into public.operational_messages(member_id, kind, title, body)
         select m.id, 'system', '인증 심사 지연(7일+)', '7일 넘게 대기 중인 인증 심사가 있어요.'
           from private.members m
          where m.role in ('operator','owner') and m.verification_status = 'verified' and m.sanction = 'none';
-      update private.verification_requests set owner_warned_7_at = now() where id = r.id;
-      v_sent := v_sent + 1;
+      get diagnostics v_cnt = row_count;
+      if v_cnt > 0 then   -- 수신자 0명이면 표식 미기록 → 다음 실행 재시도
+        update private.verification_requests set owner_warned_7_at = now() where id = r.id;
+        v_sent := v_sent + v_cnt;
+      end if;
     -- 3일 경고 (운영진)
     elsif r.owner_warned_3_at is null then
       insert into public.operational_messages(member_id, kind, title, body)
         select m.id, 'system', '인증 심사 지연(3일+)', '3일 넘게 대기 중인 인증 심사가 있어요.'
           from private.members m
          where m.role in ('operator','owner') and m.verification_status = 'verified' and m.sanction = 'none';
-      update private.verification_requests set owner_warned_3_at = now() where id = r.id;
-      v_sent := v_sent + 1;
+      get diagnostics v_cnt = row_count;
+      if v_cnt > 0 then
+        update private.verification_requests set owner_warned_3_at = now() where id = r.id;
+        v_sent := v_sent + v_cnt;
+      end if;
     end if;
     -- 사용자 지연 안내 (신청자, 3일 경과 1회)
     if r.user_delay_notified_at is null then
@@ -205,8 +220,10 @@ begin
      limit greatest(p_limit, 0)
      for update skip locked
   loop
+    -- 원본 파기 기한: 즉시(now()) → 일 1회 파기 잡이 24h 이내 처리로 수렴.
+    --   (members.verification_deadline의 '7일'은 새 제출 기한이지 원본 보존기간이 아님 — GATE3 확정값)
     update private.verification_requests
-       set status = 'expired_unreviewed', purge_after = now() + interval '7 days'
+       set status = 'expired_unreviewed', purge_after = now()
      where id = r.id;
     update private.members
        set verification_status = 'pending', verification_deadline = now() + interval '7 days'
@@ -241,7 +258,8 @@ begin
   select verification_status into v_status from private.members where id = p_member_id for update;
   if not found then return; end if;              -- 멱등: 이미 삭제됨
   if v_status = 'deleting' then return; end if;   -- 멱등: 이미 준비됨 → hold/snapshot 재실행 금지
-  update private.members set verification_status = 'deleting' where id = p_member_id;
+  -- (deleting 전이는 hold·snapshot 성공 뒤 함수 끝에서 수행 — 한 트랜잭션이라 중간 실패 시 전체 롤백.
+  --  이렇게 두면 "deleting은 최초 prepare의 모든 작업이 성공한 뒤에만 커밋"이 명시적으로 보장됨.)
 
   -- ②~③ 열린 사건·활성 제재 확인 → hold 필요 판정·생성 (cascade 전!)
   select s.student_no_hmac, s.hmac_key_version into v_hmac, v_ver
@@ -286,6 +304,9 @@ begin
         join public.comments cm on cm.id = c2.target_id where c2.id = v_case and c2.target_type='comment'),
       ''), 102400);
   end loop;
+
+  -- ① deleting 전이 (hold·snapshot 성공 후 — 함수 끝. 중간 실패 시 이 전이도 함께 롤백)
+  update private.members set verification_status = 'deleting' where id = p_member_id;
 end $$;
 -- (public.prepare_account_deletion 래퍼·grant는 001~008에 이미 존재 — 재선언 불필요)
 
@@ -323,9 +344,15 @@ begin
                  where m.id = p_member_id and m.verification_status = 'deleting') then
     return;   -- deleting이 아닌 회원의 경로는 반환하지 않음
   end if;
+  -- 정확히 '<member_id>/' prefix 아래 객체만 반환. 비정상 경로(.., 선행 slash, 빈 값)는 제외.
+  --   bucket 이름은 DB가 다루지 않고 서버 모듈이 고정 문자열 'verification-docs'로만 사용한다.
   return query
   select r.storage_path from private.verification_requests r
-   where r.member_id = p_member_id and r.storage_path is not null and length(r.storage_path) > 0;
+   where r.member_id = p_member_id
+     and r.storage_path is not null and length(r.storage_path) > 0
+     and r.storage_path like (p_member_id::text || '/%')
+     and r.storage_path not like '%..%'
+     and left(r.storage_path, 1) <> '/';
 end $$;
 create or replace function public.get_member_verification_paths(p_member_id uuid)
 returns table(storage_path text)

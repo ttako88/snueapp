@@ -7,9 +7,10 @@ import { handleMaintenance } from "../../lib/server/maintenance/core.mjs";
 import { createServiceClient } from "../../lib/server/maintenance/serviceClient.mjs";
 import { withLease } from "../../lib/server/maintenance/lease.mjs";
 import { runJob } from "../../lib/server/maintenance/jobs/registry.mjs";
+import { MAX_DURATION_SEC, LEASE_TTL_SEC, BUDGET_MS } from "../../lib/server/maintenance/config.mjs";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = MAX_DURATION_SEC;
 
 export async function GET(request) {
   const authHeader = request.headers.get("authorization");
@@ -17,7 +18,7 @@ export async function GET(request) {
 
   const { status, body } = await handleMaintenance(
     { authHeader, job },
-    { env: process.env, createServiceClient, withLease, runJob, leaseTtlSec: 120, budgetMs: 60000 }
+    { env: process.env, createServiceClient, withLease, runJob, leaseTtlSec: LEASE_TTL_SEC, budgetMs: BUDGET_MS }
   );
 
   const res = body === null ? new NextResponse(null, { status }) : NextResponse.json(body, { status });

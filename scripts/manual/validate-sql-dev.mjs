@@ -8,19 +8,32 @@
 // 사용: node scripts/manual/validate-sql-dev.mjs supabase/migrations/pending/010_course_review.sql
 // 값(DEV_DB_URL)은 .env.dev.local에서만 읽고 출력하지 않는다.
 import fs from "node:fs";
-import path from "node:path";
+import { realpathSync, lstatSync } from "node:fs";
+import { resolve, extname, sep } from "node:path";
 import pg from "pg";
 import { readDevEnv, assertDevUrl, scrub } from "./dev-url.mjs";
 
-const files = process.argv.slice(2);
-if (!files.length) {
-  console.error("사용법: node scripts/manual/validate-sql-dev.mjs <파일.sql> [...]");
+// 경로 하드닝 — apply-sql-dev.mjs와 동일한 규칙(저장소 내부 .sql만, 심볼릭 링크 거부).
+// 규칙이 두 벌이면 한쪽만 느슨해지므로 같은 검사를 그대로 쓴다.
+const REPO_ROOT = realpathSync(process.cwd());
+function fail(msg) { console.error("[거부] " + msg); process.exit(1); }
+function safeSqlPath(f) {
+  if (extname(f).toLowerCase() !== ".sql") fail(".sql 파일만 허용: " + f);
+  const abs = resolve(REPO_ROOT, f);
+  let real;
+  try { real = realpathSync(abs); } catch { fail("파일 없음/접근 불가: " + f); }
+  if (real !== abs) fail("심볼릭 링크/경로 정규화 불일치 거부: " + f);
+  if (real !== REPO_ROOT && !real.startsWith(REPO_ROOT + sep)) fail("저장소 루트 밖 경로 거부: " + f);
+  if (!lstatSync(real).isFile()) fail("일반 파일 아님: " + f);
+  return real;
+}
+
+const argv = process.argv.slice(2);
+if (!argv.length) {
+  console.error("사용법: node scripts/manual/validate-sql-dev.mjs <저장소내부.sql> [...]");
   process.exit(1);
 }
-for (const f of files) {
-  if (path.extname(f) !== ".sql") { console.error("[거부] .sql 파일만 허용:", f); process.exit(1); }
-  if (!fs.existsSync(f)) { console.error("[거부] 파일 없음:", f); process.exit(1); }
-}
+const files = argv.map(safeSqlPath);
 
 const { DEV_DB_URL: dbUrl } = readDevEnv(["DEV_DB_URL"]);
 assertDevUrl(dbUrl, "DEV_DB_URL");

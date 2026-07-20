@@ -51,6 +51,13 @@
 - SQL Editor 수동 적용을 공식 방식으로 유지 시: 파일별 SHA·적용시각·postcondition을 이 ledger에 기록
 - ⚠️ dev 재기반은 파괴적 → 무인 강행보다 사용자 기상/확인 후 실행 권장 (현재 dev는 59 PASS 검증 상태이므로 보존)
 
-## 5. 남은 문서 동기화
-- GATE3_DESIGN.md v1.4: §4.1 학번 8자리 ✅, §5.2 soft delete RPC ✅
-- comment_count 규칙(§5.5/§5.6)·moderate_content hide 반영: clean replay 후
+## 5. clean replay 실행 시도 결과 (2026-07-20 야간)
+- GPT (A) 무인 clean replay 승인(조건부: comment_count 선반영·사전보존·ref확인·중단조건). comment_count는 moderate_content에 반영 완료(커밋 9d3436f).
+- **dev 재기반(`drop schema private/authz cascade` 등)을 실행하려 했으나 하네스 안전 classifier가 파괴적 작업으로 차단** → 모달 Cancel로 중단. **현재 dev는 손상 없이 59 PASS 검증 상태 그대로 보존**.
+- 판단: 파괴적 dev 재기반은 하네스가 무인 강행을 막는 지점 = 사용자 확인/입회 후 실행이 안전. clean replay는 사용자 기상 후로 이월.
+- 대상 확인 기록: dev ref `uiikgqeoxocpvphlmoqp`(snueapp-dev, SQL Editor 헤더), 운영 `jclwkvxbvsegmbcnptpi`와 상이. 합성 fixture만(fx-*@dev.test, 00000000-...).
+
+## 6. 남은 것
+- **clean replay**(dev 재기반→001~008 재적용→fixture→60+ 테스트 재실행→사후검증→SHA 동결): 사용자 확인 후. 현재 dev에 이미 001~008(최종본 일부는 세션 중 create-or-replace로 반영)이 적용돼 59 PASS이나, "깨끗한 순차 재현"으로 재현성 확정 필요.
+- maintenance Route·서버 잡 4종(Vercel Cron) 실코드 = Gate 4a 서버부 (DEFERRED)
+- GATE3_DESIGN v1.4: §4.1·§5.2 ✅ / comment_count 규칙 문서 문단은 후속

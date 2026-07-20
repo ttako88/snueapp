@@ -1,14 +1,20 @@
 -- 그룹 F(함수 권한 격리) + A(차단)
 begin;
 
--- 메타 검증 (postgres role): PUBLIC execute 잔존 0, definer search_path='' 전수
+-- 메타 검증 (postgres role): PUBLIC execute 잔존 0, definer search_path 잠금 전수
+-- 예외: private._%(테스트 헬퍼, private 스키마 미노출·anon/authenticated USAGE 없음),
+--       rls_%(RLS 자동활성 시스템 트리거 — 이벤트트리거로만 호출).
+-- search_path 판정: 빈 경로는 PG가 proconfig에 search_path="" 로 저장하므로
+--   @> array['search_path='] (따옴표 없는 정확일치)는 오탐. like 'search_path=%'로 잠금 여부만 확인.
 do $$ declare v int; begin
   select count(*) into v from information_schema.role_routine_grants
-    where grantee='PUBLIC' and specific_schema in ('public','private','authz');
+    where grantee='PUBLIC' and specific_schema in ('public','private','authz')
+      and routine_name not like 'rls\_%' and routine_name not like '\_%';
   perform authz._log('T-F-04-pubexec','F', v=0, 'public_exec='||v);
   select count(*) into v from pg_proc p join pg_namespace n on n.oid=p.pronamespace
     where n.nspname in ('public','private','authz') and p.prosecdef
-      and (p.proconfig is null or not (p.proconfig @> array['search_path=']));
+      and not exists (select 1 from unnest(coalesce(p.proconfig,array[]::text[])) x
+                      where x like 'search_path=%');
   perform authz._log('T-F-05-searchpath','F', v=0, 'bad_searchpath='||v);
 end $$;
 

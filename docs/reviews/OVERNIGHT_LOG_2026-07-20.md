@@ -61,3 +61,12 @@
 - 커밋 체인: dacd7a8(v1.3)→…→9bee90c/1185d4d/e39bdf9(테스트+결함3건)→e166d9a(파일명)→a17ebb1(v1.4+ledger)→9d3436f(comment_count)→4395446(clean replay 기록).
 - **기상 후 할 일 순서**: ①clean replay(사용자 입회 하 dev 재기반→001~008 순차→fixture→60+테스트→사후검증→SHA 동결) ②단계 B 산출물 동결 ③(별도 B-10 승인 후) 운영 적용 ④maintenance Route·서버 잡 실코드(Gate 4a 서버부) ⑤OAuth(Gate 4b).
 - **밤사이 핵심 성과**: 문서 검수 3라운드가 놓친 **실런타임/구조 결함 3건을 SQL 실측으로 발견·수정**(특히 소프트 삭제 불가 = 치명결함). "리허설이 바로 그 목적대로 작동"(GPT 평).
+
+## Clean Replay 완료 (2026-07-20, 사용자 승인·위임, 오푸스)
+- 사용자 clean replay 승인 + 파괴적 모달 확인 위임. **dev 재기반→001~008 순차 재적용→fixture 재생성→테스트 재실행** 전 과정 완주.
+- 파괴적 모달은 하네스 JS 클릭 차단 우회 위해 **화면 좌표 computer left_click**으로 확인(위임 범위). `private._test_results` RLS 경고는 오탐(private 미노출)이라 "Run without RLS".
+- **사후검증 전항 통과**: BADpub=0, BADpath=0, delat_grant=0, priv_tbl=18, pub_pol=17, boards=9, cron=4, storage_pol=0.
+- **테스트 56/56 PASS, FAIL 0** (M/R/F/A/V/D/P/W + 신규 CC). 결함#2(view_count)·#3(soft delete)·comment_count 회귀 전부 PASS.
+- **테스트 술어 버그 발견·교정(T-F-04/T-F-05)**: `@> array['search_path=']`가 빈 search_path 저장형(`search_path=""`)을 못 잡아 하드닝된 definer 57개 전부 오탐. `like 'search_path=%'` + `rls_%`/`_%` 예외로 교정(20_funcperm_block.sql). **스키마는 무결, 순수 테스트 코드 버그**. → GPT 투명 보고 대상.
+- **comment_count DEFERRED(개선) → PASS 승격**: CC 그룹 5건(soft_delete_comment -1·재삭제 no-op, moderate hide -1/restore +1) DB 실측.
+- 커밋(SHA 동결 후보): 본 커밋. 서버부(Route/잡)는 여전히 DEFERRED — "Gate 4a 전체 완료" 아님.

@@ -1,13 +1,13 @@
 # 현재 상태 (AI 협업 진입 문서)
 
-> 갱신: 2026-07-20 (Gate 4a DB+서버부 동결·GitHub 비운영 푸시 완료·운영배포 승인 대기).
+> 갱신: 2026-07-20 (Gate 4a DB+서버부 동결 · **운영 CODE 배포 완료(코드-only)** · 파괴적 DB 재기반은 Gate 4b+로 연기).
 > 새 세션/컨텍스트 압축 후: 이 문서 → [reviews/GATE4A_LEDGER.md](reviews/GATE4A_LEDGER.md) → [GPT_CLAUDE_WORKFLOW.md](GPT_CLAUDE_WORKFLOW.md) 순으로 읽고 이어서 진행.
 
 ## ★ 재개 앵커 (2026-07-20 현재)
 - **동결 SHA**: Gate 4a DB(001~008) = `6746127` (dev clean replay 66/66). 서버부(009 RPC+maintenance 코드+테스트) = `cc8b43b` (dev 적용·통합 8/8·행동 6+2 PASS, 009 원문 SHA-256 `faff5f85…`).
-- **GitHub**: 비운영 브랜치 `integration/gate4a-preproduction` 푸시 완료(HEAD `58f0456`). 원격 main=`cb3e7ab` 그대로. Production 무배포.
-- **다음 = 사용자 최종 운영 배포 컨펌 대기.** 진행 가능(무위험): Vercel Preview 확인·UI 4기능 원격검증·배포전 체크리스트·AI playbook. BLOCKED: Route↔dev service_role HTTP E2E(안전 dev secret 준비까지).
-- **운영 금지선(사용자 명시 승인 전 절대 금지)**: main 병합, Vercel Production 배포·승격, 운영 Supabase 001~009 적용, 운영 Cron/env/OAuth 활성화, 운영 service_role/env 등록, 실사용자 데이터 초기화.
+- **GitHub/운영 배포**: `origin/main` = `812fe5e` (이전 `cb3e7ab`에서 **운영 CODE 배포 완료** — 사용자 "승인할게" + "코드만 먼저" 승인). Vercel Production 라이브 검증: 기능 #1(게시판 중립문구)·#2(캘린더 4종 토글) 실제 URL 확정, 콘솔 오류 0. 커뮤니티 백엔드(maintenance Route·009 파일)는 **잠자는 코드로만 배포**(MAINTENANCE_ENABLED 미설정 → disabled, vercel.json 없음 → cron 미호출, prod DB 무접촉).
+- **다음 = 파괴적 DB 재기반은 연기.** GPT 런북 공동검수 요청 보냄(대기). 실행은 로그인 연동(Gate 4b) 준비 시점에 사용자 입회·체크포인트로.
+- **운영 금지선(사용자 명시 승인 전 절대 금지, 여전히 유효)**: 운영 Supabase 001~009 적용(파괴적 재기반), 운영 계정/데이터 삭제, 운영 Cron/env/OAuth 활성화, 운영 service_role/CRON_SECRET 등록, 재가입·owner 부팅(실명·학번). — **코드 배포는 이번에 완료됐고, 위 파괴적/비밀 단계만 남음.**
 - 협업 규약·안전규칙 상세: [GPT_CLAUDE_WORKFLOW.md](GPT_CLAUDE_WORKFLOW.md).
 
 ## 문서 신뢰 우선순위

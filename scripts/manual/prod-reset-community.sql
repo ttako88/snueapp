@@ -197,14 +197,17 @@ begin
     end if;
 
     -- 2-2b) 시퀀스: 승인 테이블(identity 컬럼)에 소유된 것만 허용 — 독립 시퀀스 금지 (A-R4)
+    --       소유 테이블의 namespace도 앱 스키마여야 함 — public 동명 테이블로 통과 금지 (조건부 허가 보완②)
     select string_agg(n.nspname || '.' || s.relname, ', ') into bad
     from pg_class s join pg_namespace n on n.oid = s.relnamespace
     where n.nspname in ('private','authz') and s.relkind = 'S'
       and not exists (
         select 1 from pg_depend d
         join pg_class t on t.oid = d.refobjid and d.refclassid = 'pg_class'::regclass
+        join pg_namespace tn on tn.oid = t.relnamespace
         where d.objid = s.oid and d.classid = 'pg_class'::regclass
           and d.deptype in ('i','a')
+          and tn.nspname in ('private','authz')
           and t.relname in (select name from _reset_allowlist where kind in ('private_table','test_table')));
     if bad is not null then
       raise exception 'pre-check failed: 독립(비소유) 시퀀스 — %', bad;
@@ -219,6 +222,31 @@ begin
         where kind = 'app_function' and to_regprocedure(signature) is not null);
     if bad is not null then
       raise exception 'pre-check failed: 앱 스키마에 allowlist 밖 함수/overload — %', bad;
+    end if;
+
+    -- 2-3b) 앱 스키마 내부 타입: 승인 릴레이션의 자동 composite row type + 그 array type만.
+    --       enum·domain·range·독립 composite 등은 전부 중단 (조건부 허가 보완①)
+    select string_agg(n.nspname || '.' || t.typname || '(' || t.typtype || ')', ', ') into bad
+    from pg_type t join pg_namespace n on n.oid = t.typnamespace
+    where n.nspname in ('private','authz')
+      and not (
+        -- 승인 릴레이션(allowlist 테이블·소유 시퀀스·TOAST·인덱스)의 자동 row type
+        (t.typtype = 'c' and t.typrelid <> 0 and exists (
+           select 1 from pg_class c
+           where c.oid = t.typrelid and c.relnamespace = t.typnamespace
+             and ((c.relkind = 'r' and c.relname in
+                    (select name from _reset_allowlist where kind in ('private_table','test_table')))
+                  or c.relkind in ('S','t','i'))))
+        -- 위 row type에 자동 생성된 array type
+        or (t.typelem <> 0 and exists (
+           select 1 from pg_type et join pg_class c on c.oid = et.typrelid
+           where et.oid = t.typelem and et.typtype = 'c' and c.relnamespace = t.typnamespace
+             and ((c.relkind = 'r' and c.relname in
+                    (select name from _reset_allowlist where kind in ('private_table','test_table')))
+                  or c.relkind in ('S','t','i'))))
+      );
+    if bad is not null then
+      raise exception 'pre-check failed: 앱 스키마에 예상 밖 타입 — %', bad;
     end if;
 
     -- 2-4) extension이 앱 스키마에 설치되어 있으면 중단

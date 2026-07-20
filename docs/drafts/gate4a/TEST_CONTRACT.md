@@ -10,7 +10,11 @@
 - [T-F-03] todo — 역할별 허용 함수만 성공 (matrix 스팟체크: moderator/operator/owner 각 1)
 - [T-F-04] todo — information_schema 검사: PUBLIC EXECUTE 잔존 0개
 - [T-F-05] todo — 전 definer 함수 proconfig에 search_path='' 확인
-- [T-F-06] todo — anon이 is_active_member() 등 헬퍼 직접 EXECUTE 불가 (boards anon 정책은 함수 무호출)
+- [T-F-06] todo — anon이 authz 헬퍼 직접 EXECUTE 불가 (boards anon 정책은 함수 무호출)
+- [T-F-07] todo — (r2) authz 스키마가 PostgREST에 미노출 — authenticated의 REST RPC로 is_blocked_author 호출 불가 (동일 작성자 오라클 차단)
+- [T-F-08] todo — (r2) 트랙 B public 래퍼 전부 EXECUTE=service_role만, authenticated 호출 실패
+- [T-F-09] todo — (r3) 클라이언트가 posts의 hidden_at·author_withdrawn_at·카운터 UPDATE 시 컬럼 권한 거부. definer의 hidden_at 변경은 트리거 미발동으로 성공
+- [T-F-10] todo — (r3) deleted_at: 임의 시각 지정해도 now()로 강제, 복구(재-null) 불가, 삭제 후 수정 불가
 
 ## M. members (§3)
 - [T-M-01] todo — authenticated로 private.members 직접 select/insert/update → 실패 (스키마 USAGE부터 차단)
@@ -49,6 +53,11 @@
 - [T-D-04] todo — admin_reveal_author: 무관 case_id 차용 실패, reason 검증, audit 동일 트랜잭션
 - [T-D-05] todo — 신고자 정보 moderator 화면 projection 미노출, 신고자 탈퇴 시 reporter null화+사건 보존
 - [T-D-06] todo — 동시 신고 → 단일 open 사건 수렴, resolved 다건 허용
+- [T-D-07] todo — (r2) 탈퇴자 콘텐츠 hide/restore 가능, warn·write_restrict는 일반 거부
+- [T-D-08] todo — (r2) 해제 대칭: moderator가 suspend 해제 실패, banned 해제는 owner만
+- [T-D-09] todo — (r2) write_restrict는 spam reason_code 사건에서만 성공
+- [T-D-10] todo — (r2) 동시 grant_role 강등 경쟁 → owner 0명 불가 (advisory lock)
+- [T-D-11] todo — (r2) submit_report: 미인증·suspended 실패, write_restricted 성공, 반복 호출로 report_count 미증가
 
 ## A. 익명·차단 (§5.3·§5.4)
 - [T-A-01] todo — block_author: 신규/중복 동일 응답, 자기 차단 거부
@@ -69,7 +78,9 @@
 - [T-G-03] todo — 계정 삭제 시 hold가 cascade보다 선행
 - [T-G-04] todo — purge_expired_holds: retention_until 경과 행 hard delete 확인
 - [T-G-05] todo — 삭제된 계정의 잔존 JWT로 접근 차단
-- [T-G-06] todo — retention_until 미확정 상태에서 production hold 생성 거부 (dev 플래그로 시뮬레이션)
+- [T-G-06] todo — (r2) policy_settings.hold_retention_days null → hold 필요 탈퇴 거부, 값 설정 시 retention_until 자동 계산 (dev는 트랜잭션 내 fixture 값+롤백)
+- [T-G-07] todo — (r2) 30일 정리: 하위 댓글 포함 트리째 삭제, 글·하위 댓글 어느 쪽이든 열린 사건 있으면 전체 보존
+- [T-G-08] todo — (r2) 배치 실패 시 본문 롤백+batch_runs 실패 기록 보존, 3연속 실패 owner 메시지
 
 ## W. 탈퇴 콘텐츠 13종 (§13 — v1.3)
 - [T-W-01] todo — 비삭제 글·댓글 내용 유지

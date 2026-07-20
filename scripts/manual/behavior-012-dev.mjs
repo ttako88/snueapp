@@ -247,6 +247,34 @@ async function main() {
     await actAs(U(2));
     await mustFail("자기 사건은 본인이 처리 불가",
       `select public.resolve_auto_hidden_case(${ok2.id}, 'restore', '내 글이라 복구')`);
+
+    // ── (N7) 옛 경로로 자동숨김 콘텐츠를 직접 건드리는 우회 차단 ──
+    await mustFail("자동숨김 콘텐츠를 직접 hidden_at 조작으로 복구 불가",
+      `update public.posts set hidden_at = null where id = ${pOwn.id}`);
+
+    // ── (N8) close_case류로 검토 없이 종결하는 우회 차단 ──
+    await mustFail("자동숨김 사건을 검토 기록 없이 종결 불가",
+      `update private.moderation_cases set status='dismissed' where id=${ok2.id}`);
+
+    // ── (N9) owner 글은 자동숨김 대상이 아니다 ──
+    await client.query(`update private.members set role='owner' where id='${U(4)}'`);
+    await actAs(U(4));
+    const { rows: [pOwner] } = await client.query(
+      `insert into public.posts (board_id,title,body,author_nickname) values (${b.id},'owner글','본문','회원4') returning id`);
+    await actAs(U(3));
+    await client.query(`select public.submit_report('post', ${pOwner.id}, 'privacy', '개인정보 상세')`);
+    const cOwner = await counts(pOwner.id);
+    const { rows: [okc] } = await client.query(
+      `select count(*)::int n from private.moderation_cases where target_type='post' and target_id=${pOwner.id}`);
+    const { rows: [skip] } = await client.query(
+      `select count(*)::int n from private.audit_logs where action='auto_hide:skipped_owner' and target_id='${pOwner.id}'`);
+    rec("owner 글은 신고돼도 자동숨김 안 됨(사건은 접수)",
+      cOwner.hidden_at === null && okc.n === 1 && skip.n === 1,
+      `hidden=${cOwner.hidden_at} 사건=${okc.n} skip로그=${skip.n}`);
+
+    // ── (N10) 자동숨김 상태 컬럼 정합성 ──
+    await mustFail("kind 없이 auto_hidden_at만 설정 불가",
+      `update private.moderation_cases set auto_hidden_at=now(), auto_hide_kind=null where id=${nk.id}`);
   } finally {
     await client.query("rollback");
     await client.end();

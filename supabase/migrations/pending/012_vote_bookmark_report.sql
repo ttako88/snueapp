@@ -195,6 +195,74 @@ alter table private.moderation_cases
   add column if not exists auto_hide_reviewed_at timestamptz,
   add column if not exists auto_hide_decision text check (auto_hide_decision in ('restored','kept_hidden'));
 
+-- (REQUIRED-012-N10) 네 컬럼이 독립 nullable이면 "kind 없이 auto_hidden_at만",
+-- "reviewed_at 없이 decision만", "restored인데 status=resolved" 같은 상태가 생긴다.
+do $$
+begin
+  if not exists (select 1 from pg_constraint
+                  where conname = 'moderation_cases_auto_hide_consistent'
+                    and conrelid = 'private.moderation_cases'::regclass) then
+    alter table private.moderation_cases add constraint moderation_cases_auto_hide_consistent check (
+      (auto_hidden_at is null) = (auto_hide_kind is null)
+      and (auto_hide_reviewed_at is null) = (auto_hide_decision is null)
+      and (auto_hide_decision is null or auto_hidden_at is not null)
+      and (auto_hide_decision is distinct from 'restored'    or status = 'dismissed')
+      and (auto_hide_decision is distinct from 'kept_hidden' or status = 'resolved')
+    );
+  end if;
+end $$;
+
+-- (REQUIRED-012-N8) 기존 close_case로 자동숨김 사건을 검토 없이 닫는 우회를 막는다.
+-- UI가 아니라 DB가 모든 종결 경로를 통제하게 한다.
+create or replace function private.guard_auto_hidden_case_close()
+returns trigger language plpgsql set search_path='' as $$
+begin
+  if old.status = 'open' and old.auto_hidden_at is not null
+     and new.status in ('resolved','dismissed')
+     and (new.auto_hide_reviewed_at is null or new.auto_hide_decision is null) then
+    raise exception 'auto-hidden case must be closed via resolve_auto_hidden_case';
+  end if;
+  return new;
+end $$;
+revoke execute on function private.guard_auto_hidden_case_close() from public, anon, authenticated;
+
+drop trigger if exists moderation_cases_auto_hide_close on private.moderation_cases;
+create trigger moderation_cases_auto_hide_close
+  before update on private.moderation_cases
+  for each row execute function private.guard_auto_hidden_case_close();
+
+-- (REQUIRED-012-N7) 기존 moderate_content('restore'/'hide')가 자동숨김 콘텐츠를
+-- 직접 건드리면 사건은 open인 채 콘텐츠만 바뀌어, 새 원자 경로를 우회한다.
+-- 함수 본문을 복사해 재정의하는 대신(동결 RC 본문 중복 = 드리프트 위험),
+-- **콘텐츠 쪽에 가드**를 걸고 정식 경로만 세션 플래그로 통과시킨다.
+create or replace function private.guard_auto_hidden_content()
+returns trigger language plpgsql set search_path='' as $$
+declare v_open boolean;
+begin
+  if new.hidden_at is not distinct from old.hidden_at then return new; end if;
+  -- resolve_auto_hidden_case가 세운 플래그면 통과
+  if coalesce(current_setting('app.auto_hide_review', true), '') = '1' then return new; end if;
+  select exists (
+    select 1 from private.moderation_cases c
+     where c.target_type = tg_argv[0] and c.target_id = old.id
+       and c.status = 'open' and c.auto_hidden_at is not null) into v_open;
+  if v_open then
+    raise exception 'use resolve_auto_hidden_case for auto-hidden content';
+  end if;
+  return new;
+end $$;
+revoke execute on function private.guard_auto_hidden_content() from public, anon, authenticated;
+
+drop trigger if exists posts_auto_hidden_guard on public.posts;
+create trigger posts_auto_hidden_guard
+  before update on public.posts
+  for each row execute function private.guard_auto_hidden_content('post');
+
+drop trigger if exists comments_auto_hidden_guard on public.comments;
+create trigger comments_auto_hidden_guard
+  before update on public.comments
+  for each row execute function private.guard_auto_hidden_content('comment');
+
 create or replace function private.apply_report_auto_hide()
 returns trigger language plpgsql security definer set search_path='' as $$
 declare
@@ -204,6 +272,7 @@ declare
   v_recent    int;
   v_hidden    boolean := false;
   v_post      bigint;
+  v_author    record;
 begin
   -- (REQUIRED-012-N1) 잠그지 않고 세면, 세 명이 거의 동시에 신고할 때 각 트랜잭션이
   -- 서로의 미커밋 신고를 못 봐서 **최종 3건인데도 아무도 숨기지 않는** 일이 생긴다.
@@ -244,6 +313,21 @@ begin
     from private.reports r where r.case_id = new.case_id and r.reporter_id is not null;
 
   if not (v_emergency or v_distinct >= 3) then return new; end if;
+
+  -- (REQUIRED-012-N9) owner가 쓴 콘텐츠는 자동숨김하지 않는다.
+  -- Gate 3 불변조건이기도 하고, 1인 owner 운영기에는 self-target 금지 때문에
+  -- **그 사건을 복구할 수 있는 사람이 아무도 없어진다.**
+  -- 사건·신고는 정상 접수하고 우선검토 표시만 남긴다(실제 조치는 break-glass 정책).
+  select * into v_author from private.content_author(v_case.target_type, v_case.target_id);
+  if v_author.member_role = 'owner' then
+    update private.moderation_cases c
+       set emergency = c.emergency or v_emergency
+     where c.id = v_case.id;
+    insert into private.audit_logs (actor_id, action, target_type, target_id, case_id, reason)
+    values (null, 'auto_hide:skipped_owner', v_case.target_type, v_case.target_id::text, v_case.id,
+            'owner 콘텐츠는 자동숨김 대상 아님 — 우선 검토 필요');
+    return new;
+  end if;
 
   if v_case.target_type = 'post' then
     update public.posts p set hidden_at = clock_timestamp()
@@ -332,6 +416,9 @@ begin
     return jsonb_build_object('status','already_resolved','case_status',v_case.status);  -- 멱등
   end if;
 
+  -- 아래 콘텐츠 변경은 정식 검토 경로이므로 가드를 통과시킨다 (N7)
+  perform set_config('app.auto_hide_review', '1', true);
+
   if p_decision = 'restore' then
     if v_case.target_type = 'post' then
       update public.posts p set hidden_at = null where p.id = v_case.target_id and p.hidden_at is not null;
@@ -351,11 +438,31 @@ begin
            auto_hide_reviewed_at = clock_timestamp(), auto_hide_decision = 'restored'
      where c.id = p_case_id;
   else
+    -- (REQUIRED-012-N11) keep_hidden인데 콘텐츠가 이미 보이는 상태일 수 있다
+    -- (다른 관리 경로·예외로 복구된 경우). 사건만 '숨김 유지'로 닫고 콘텐츠는
+    -- 노출된 채 남는 모순을 막기 위해 같은 트랜잭션에서 다시 숨긴다.
+    if v_case.target_type = 'post' then
+      update public.posts p set hidden_at = clock_timestamp()
+       where p.id = v_case.target_id and p.hidden_at is null and p.deleted_at is null;
+    else
+      update public.comments c set hidden_at = clock_timestamp()
+       where c.id = v_case.target_id and c.hidden_at is null and c.deleted_at is null
+      returning c.post_id into v_post;
+      -- 실제 visible→hidden 전이일 때만 1회 감소
+      if v_post is not null then
+        update public.posts p set comment_count = greatest(p.comment_count - 1, 0) where p.id = v_post;
+      end if;
+    end if;
     update private.moderation_cases c
        set status = 'resolved', closed_at = clock_timestamp(), closed_by = auth.uid(),
            auto_hide_reviewed_at = clock_timestamp(), auto_hide_decision = 'kept_hidden'
      where c.id = p_case_id;
   end if;
+
+  -- 플래그는 쓰자마자 내린다. set_config(local)은 **트랜잭션 끝까지** 유지되므로,
+  -- 그대로 두면 같은 트랜잭션 안의 이후 직접 조작까지 가드를 통과해 버린다
+  -- (dev 행동검증에서 실제로 재현됨).
+  perform set_config('app.auto_hide_review', '0', true);
 
   insert into private.moderation_actions (case_id, action, actor_id, reason)
   values (p_case_id, case when p_decision = 'restore' then 'restore' else 'hide' end, auth.uid(), p_reason);

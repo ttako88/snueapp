@@ -76,6 +76,10 @@ begin
   if v_role is null or v_role not in ('operator', 'owner') then
     raise exception 'not allowed';
   end if;
+  -- p_pin이 null이면 PL/pgSQL의 IF가 false로 처리해 **해제 경로로 들어간다.**
+  -- 실수로 null을 보낸 요청이 공지를 내려버리지 않도록 먼저 막는다.
+  if p_pin is null then raise exception 'pin decision required'; end if;
+
   -- 운영 행위는 사유 없이 남기지 않는다 (REQUIRED-011-4: 길이·제어문자 제한)
   if p_reason is null or btrim(p_reason) = '' then raise exception 'reason required'; end if;
   if char_length(btrim(p_reason)) > 500 then raise exception 'reason too long'; end if;

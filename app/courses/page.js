@@ -1,16 +1,30 @@
 import Link from "next/link";
 import Timetable from "../components/Timetable";
+import { isEnabled } from "../lib/features";
 
 // 강의 탭 허브 — 맨 위 '내 시간표' + 아래 도구 카드들.
-// ready=true인 카드(학점계산기·마법사·e-Class)는 동작, 나머지는 '준비 중'.
+// ready=true인 카드는 동작, 나머지는 '준비 중'.
+// 모듈로 만든 기능(강의 검색·강의평가)은 app/lib/features.js 스위치를 따른다.
 
 // 도구 카드 정의 (ready=true면 눌러서 들어감)
 const TOOLS = [
   { href: "/courses/gpa", icon: "📊", title: "학점 계산기", desc: "성적 넣으면 평점 자동", ready: true },
   { href: "/courses/wizard", icon: "🧙", title: "시간표 마법사", desc: "교양·재이수 경우의 수", ready: true },
   { href: "/eclass", icon: "🔗", title: "e-Class 연동", desc: "과제·영상강의 마감 가져오기", ready: true },
-  { href: null, icon: "🔍", title: "강의 검색", desc: "전체 강의 시간표 조회", ready: false },
-  { href: null, icon: "⭐", title: "강의평가", desc: "수강 후기·평점", ready: false },
+  {
+    href: "/courses/search",
+    icon: "🔍",
+    title: "강의 검색",
+    desc: "전체 강의 시간표 조회",
+    ready: isEnabled("courseSearch"),
+  },
+  {
+    href: "/courses/review",
+    icon: "⭐",
+    title: "강의평가",
+    desc: "수강 후기·평점",
+    ready: isEnabled("courseReview"),
+  },
 ];
 
 export default function CoursesPage() {

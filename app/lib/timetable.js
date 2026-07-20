@@ -1,5 +1,9 @@
 // 시간표 공용 도구 (상수·색·자동채움·그룹핑 로직). 데이터는 파싱해둔 JSON에서.
 import COURSES from "../data/courses.json";
+// 순수 상수·분류 로직은 courseMeta.js로 분리(JSON 미의존 → 테스트에서 직접 사용 가능).
+// 여기서 re-export하므로 기존 import 경로(timetable.js)는 그대로 동작한다.
+import { PERIOD_TIMES, COURSE_CATEGORY_ORDER, categoryOf } from "./courseMeta.js";
+export { PERIOD_TIMES, COURSE_CATEGORY_ORDER, categoryOf };
 
 export const ALL_COURSES = COURSES;
 export const DAYS = ["월", "화", "수", "목", "금"];
@@ -14,17 +18,7 @@ export const SEMESTER_LABELS = {
 };
 export const DEFAULT_SEMESTER = "2026-2"; // 이번 학기(가장 최신 데이터)
 
-// 교시별 시각 (서울교대: 50분 수업+10분 쉬는시간, 4교시 후 점심 40분)
-export const PERIOD_TIMES = [
-  { p: 1, start: "09:00", end: "09:50" },
-  { p: 2, start: "10:00", end: "10:50" },
-  { p: 3, start: "11:00", end: "11:50" },
-  { p: 4, start: "12:00", end: "12:50" },
-  { p: 5, start: "13:30", end: "14:20" },
-  { p: 6, start: "14:30", end: "15:20" },
-  { p: 7, start: "15:30", end: "16:20" },
-  { p: 8, start: "16:30", end: "17:20" },
-];
+// (PERIOD_TIMES는 courseMeta.js로 이동 — 위에서 re-export)
 
 // 심화과정 13개 → 군(A/B) 자동 결정
 export const DEPARTMENTS = [
@@ -255,19 +249,7 @@ export function groupCourses(list) {
 // ── 강의 추가 시트용: 성격별 분류 + 과목명 기준 묶기 ──
 // 사용자 리포트(2026-07-20): 택1 그룹을 한 줄로 접으면 안에 뭐가 있는지 안 보이고("7개중택1만 뜸"),
 // 교양이 성격별로 안 나뉘어 찾기 어려움 → 과목명별 낱개 노출(분반만 접기) + 성격 헤더로 해결.
-export const COURSE_CATEGORY_ORDER = ["전공", "심화", "교직", "핵심교양", "중점교양", "자율교양", "교양"];
-// 단독필수 교양 3종의 공식 성격 (2026 요람: 수업영어실습=핵심 교육영어,
-// 한국의역사와문화=중점 역사와사회, 현대수학의기초=중점 수학의세계)
-const GY_STANDALONE_CAT = {
-  수업영어실습: "핵심교양",
-  한국의역사와문화: "중점교양",
-  현대수학의기초: "중점교양",
-};
-export function categoryOf(c) {
-  if (c.type !== "교양") return c.type; // 전공/심화/교직
-  if (c.groupLabel) return c.groupLabel.split(" · ")[0]; // "핵심교양/중점교양/자율교양"
-  return GY_STANDALONE_CAT[c.name] || "교양";
-}
+// (COURSE_CATEGORY_ORDER·categoryOf는 courseMeta.js로 이동 — 맨 위에서 re-export)
 
 // 과목명 기준으로만 묶어 성격별 섹션으로 반환. 택1 요건은 없애는 게 아니라
 // 각 과목 줄의 reqLabel(요건 안내 문구)로 계속 보여준다.

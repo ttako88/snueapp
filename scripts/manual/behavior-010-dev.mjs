@@ -1,8 +1,7 @@
 // 010 강의평가 스키마 행동 검증 (dev, 트랜잭션 안에서만 — 끝나면 전부 ROLLBACK).
 // "문법이 통과했다"와 "제약이 의도대로 막는다"는 다른 문제라서 실제로 데이터를 넣어 확인한다.
-// v3: GPT 재검수가 요구한 테스트 범위 보강 (희소셀 억제·정정본 회수·가명화 완전성 등).
+// v4: 작성자 별칭(무작위) 도입 반영 + GPT 3차 요구 테스트(9→10 실제 경계, 원장 계보) 추가.
 import fs from "node:fs";
-import { createHash } from "node:crypto";
 import pg from "pg";
 import { readDevEnv, assertDevUrl, scrub } from "./dev-url.mjs";
 
@@ -19,21 +18,20 @@ async function mustFail(name, sql) {
   try {
     await client.query("savepoint sp"); await client.query(sql); await client.query("release savepoint sp");
     rec(name, false, "막혔어야 하는데 통과됨");
-  } catch (e) { await client.query("rollback to savepoint sp"); rec(name, true, e.message.split("\n")[0].slice(0, 68)); }
+  } catch (e) { await client.query("rollback to savepoint sp"); rec(name, true, e.message.split("\n")[0].slice(0, 66)); }
 }
 async function mustPass(name, sql) {
   try {
     await client.query("savepoint sp"); await client.query(sql); await client.query("release savepoint sp");
     rec(name, true);
-  } catch (e) { await client.query("rollback to savepoint sp"); rec(name, false, e.message.split("\n")[0].slice(0, 68)); }
+  } catch (e) { await client.query("rollback to savepoint sp"); rec(name, false, e.message.split("\n")[0].slice(0, 66)); }
 }
-// reviewer_key 계약: hex64
-const RK = (s) => `'${createHash("sha256").update(String(s)).digest("hex")}'`;
 const actAs = (u) => client.query(`select set_config('request.jwt.claims','{"sub":${JSON.stringify(u)}}',true)`);
+const stats = async (id) => (await client.query(`select public.course_review_stats(${id}) s`)).rows[0].s;
 
 const A_UUID = "00000000-0000-0000-0000-0000000010a1";
+const B_UUID = "00000000-0000-0000-0000-0000000010a2";
 const A = `'${A_UUID}'`;
-const RKA = RK("a");
 
 async function main() {
   await client.connect();
@@ -45,111 +43,148 @@ async function main() {
 
     await client.query(`insert into auth.users (id, instance_id, aud, role, email) values
       ('${A_UUID}','00000000-0000-0000-0000-000000000000','authenticated','authenticated','t010a@example.invalid'),
-      ('00000000-0000-0000-0000-0000000010a2','00000000-0000-0000-0000-000000000000','authenticated','authenticated','t010b@example.invalid')`);
-    await client.query(`update private.members set nickname='평가자1', verification_status='verified'
-       where id='${A_UUID}'`);
+      ('${B_UUID}','00000000-0000-0000-0000-000000000000','authenticated','authenticated','t010b@example.invalid')`);
+    await client.query(`update private.members set nickname='평가자1', verification_status='verified' where id='${A_UUID}'`);
     await client.query(`insert into private.course_review_subjects (id, course_key, professor_key, course_name_display, professor_display)
       values (9001,'초등도덕교육론','김교수','초등도덕교육론','김교수'),
              (9002,'초등수학교육의이해','박교수','초등수학교육의 이해','박교수')`);
 
+    // subject 범위 별칭 (member 연결은 선택)
+    const alias = async (subjectId, memberId) => {
+      const { rows: [a] } = await client.query(
+        `insert into private.course_review_actor_aliases (subject_id, member_id)
+         values (${subjectId}, ${memberId ? `'${memberId}'` : "null"}) returning id`);
+      return `'${a.id}'`;
+    };
+    const AL1 = await alias(9001, A_UUID);
+
     const mk = (id, st) => `insert into private.course_reviews
-      (id, subject_id, member_id, reviewer_key, semester, status, grading)
-      values (${id}, 9001, ${A}, ${RKA}, '2025-1', '${st}', '보통')`;
+      (id, subject_id, member_id, actor_alias_id, semester, status, grading)
+      values (${id}, 9001, ${A}, ${AL1}, '2025-1', '${st}', '보통')`;
+
+    // ── 별칭 규칙 ──
+    await mustFail("한 과목에서 같은 회원의 별칭 2개 금지",
+      `insert into private.course_review_actor_aliases (subject_id, member_id) values (9001, '${A_UUID}')`);
 
     // ── 활성 슬롯 / 정정 체인 ──
     await mustPass("초안 1건 생성", mk(9101, "draft"));
     await mustFail("같은 수강 건에 활성 평가 2개 금지", mk(9102, "draft"));
     await client.query(`update private.course_reviews set status='corrected' where id=9101`);
     await mustPass("구버전 corrected → 신버전 published 공존(정정 가능)",
-      `insert into private.course_reviews (id,subject_id,member_id,reviewer_key,semester,status,grading,published_at,supersedes_id,contribution_id)
-       values (9103,9001,${A},${RKA},'2025-1','published','보통',now(),9101,
+      `insert into private.course_reviews (id,subject_id,member_id,actor_alias_id,semester,status,grading,published_at,supersedes_id,contribution_id)
+       values (9103,9001,${A},${AL1},'2025-1','published','보통',now(),9101,
                (select contribution_id from private.course_reviews where id=9101))`);
     await mustFail("정정 분기 금지",
-      `insert into private.course_reviews (id,subject_id,member_id,reviewer_key,semester,status,grading,supersedes_id)
-       values (9104,9001,${A},${RKA},'2026-1','draft','보통',9101)`);
+      `insert into private.course_reviews (id,subject_id,member_id,actor_alias_id,semester,status,grading,supersedes_id)
+       values (9104,9001,${A},${AL1},'2026-1','draft','보통',9101)`);
     await client.query(`update private.course_reviews set status='hidden_by_moderation' where id=9103`);
     await mustFail("숨김 평가가 있으면 새 평가 불가(모더레이션 우회 차단)", mk(9105, "draft"));
     await client.query(`update private.course_reviews set status='published' where id=9103`);
 
     // ── 사전검토 강제 ──
+    const AL_B = await alias(9001, null);
     await mustFail("자유서술이 사전검토 없이 공개 불가",
-      `insert into private.course_reviews (id,subject_id,member_id,reviewer_key,semester,status,body,published_at)
-       values (9106,9001,${A},${RK("b")},'2025-2','published','좋은 수업',now())`);
+      `insert into private.course_reviews (id,subject_id,member_id,actor_alias_id,semester,status,body,published_at)
+       values (9106,9001,${A},${AL_B},'2025-2','published','좋은 수업',now())`);
     await mustFail("시험경향도 reviewed_at 없이 공개 불가",
-      `insert into private.exam_tips (id,subject_id,member_id,reviewer_key,semester,status,published_at)
-       values (9201,9001,${A},${RKA},'2025-1','published',now())`);
+      `insert into private.exam_tips (id,subject_id,member_id,actor_alias_id,semester,status,published_at)
+       values (9201,9001,${A},${AL1},'2025-1','published',now())`);
+    await mustFail("시험경향 서술에 제어문자 거부",
+      `insert into private.exam_tips (id,subject_id,member_id,actor_alias_id,semester,status,study_tip)
+       values (9202,9001,${A},${AL1},'2025-2','draft', 'a' || chr(7) || 'b')`);
 
-    // ── 원장 기본 제약 ──
+    // ── 원장 ──
     const CONTRIB = `(select contribution_id from private.course_reviews where id=9103)`;
+    await mustFail("주인 없는(member_id null) 지급행 생성 금지",
+      `insert into private.ticket_ledger (member_id,delta,reason,idempotency_key)
+       values (null,20,'review_published','k-orphan')`);
     await mustPass("적립 기록(기여 귀속)",
       `insert into private.ticket_ledger (member_id,delta,reason,ref_type,ref_id,contribution_id,idempotency_key)
        values (${A},20,'review_published','course_review',9101,${CONTRIB},'review_reward:c1')`);
     await mustFail("적립 이유에 음수 금지",
-      `insert into private.ticket_ledger (member_id,delta,reason,idempotency_key)
-       values (${A},-20,'review_published','k-bad-sign')`);
+      `insert into private.ticket_ledger (member_id,delta,reason,idempotency_key) values (${A},-20,'review_published','k-bad-sign')`);
     await mustFail("clawback은 역분개 대상 필수",
-      `insert into private.ticket_ledger (member_id,delta,reason,idempotency_key)
-       values (${A},-20,'clawback','k-no-ref')`);
+      `insert into private.ticket_ledger (member_id,delta,reason,idempotency_key) values (${A},-20,'clawback','k-no-ref')`);
     await mustFail("원장 UPDATE 금지", `update private.ticket_ledger set delta=999 where idempotency_key='review_reward:c1'`);
     await mustFail("원장 DELETE 금지", `delete from private.ticket_ledger where idempotency_key='review_reward:c1'`);
 
-    // ── 역분개 정합성 (신규) ──
     const { rows: [{ id: paidId }] } = await client.query(
       `select id from private.ticket_ledger where idempotency_key='review_reward:c1'`);
     await mustFail("금액이 다른 역분개 거부",
-      `insert into private.ticket_ledger (member_id,delta,reason,reverses_entry_id,idempotency_key)
-       values (${A},-5,'clawback',${paidId},'rev-wrong-amt')`);
+      `insert into private.ticket_ledger (member_id,delta,reason,ref_type,ref_id,contribution_id,reverses_entry_id,idempotency_key)
+       values (${A},-5,'clawback','course_review',9101,${CONTRIB},${paidId},'rev-wrong-amt')`);
     await mustFail("남의 지급행 역분개 거부",
-      `insert into private.ticket_ledger (member_id,delta,reason,reverses_entry_id,idempotency_key)
-       values ('00000000-0000-0000-0000-0000000010a2',-20,'clawback',${paidId},'rev-other-member')`);
+      `insert into private.ticket_ledger (member_id,delta,reason,ref_type,ref_id,contribution_id,reverses_entry_id,idempotency_key)
+       values ('${B_UUID}',-20,'clawback','course_review',9101,${CONTRIB},${paidId},'rev-other')`);
+    await mustFail("참조정보를 안 베낀 역분개 거부(계보 보존)",
+      `insert into private.ticket_ledger (member_id,delta,reason,ref_type,ref_id,reverses_entry_id,idempotency_key)
+       values (${A},-20,'clawback','course_review',99999,${paidId},'rev-badref')`);
 
-    // ── 정정본 철회 시 최초 지급이 회수되는가 (GPT가 잡은 구멍) ──
+    // ── 정정본 철회 시 최초 지급 회수 ──
     await actAs(A_UUID);
     await mustPass("정정본(9103) 철회", `select public.withdraw_course_review(9103)`);
     const { rows: [cb] } = await client.query(
       `select count(*)::int n, coalesce(sum(delta),0)::int s from private.ticket_ledger
         where reason='clawback' and reverses_entry_id=${paidId}`);
-    rec("정정본을 철회해도 구버전에 준 보상이 회수됨", cb.n === 1 && cb.s === -20, `${cb.n}건 ${cb.s}`);
-    await mustFail("이미 역분개된 지급을 또 역분개 불가",
-      `insert into private.ticket_ledger (member_id,delta,reason,reverses_entry_id,idempotency_key)
-       values (${A},-20,'clawback',${paidId},'rev-dup')`);
+    rec("정정본을 철회해도 구버전 보상이 회수됨", cb.n === 1 && cb.s === -20, `${cb.n}건 ${cb.s}`);
     const { rows: [rv] } = await client.query(
       `select id from private.ticket_ledger where reason='clawback' and reverses_entry_id=${paidId}`);
     await mustFail("clawback 자체를 역분개 불가",
       `insert into private.ticket_ledger (member_id,delta,reason,reverses_entry_id,idempotency_key)
        values (${A},20,'clawback',${rv.id},'rev-of-rev')`);
 
-    // ── 통계: 표본 계산과 희소 셀 억제 ──
-    await client.query(`delete from private.course_reviews where subject_id=9002`);
-    // 한 사람이 여러 학기 10건 → 작성자는 1명
+    // ── 통계: 표본은 '서로 다른 작성자' ──
+    const ALS = await alias(9002, A_UUID);
     for (let i = 0; i < 10; i++) {
       const sem = `20${20 + Math.floor(i / 2)}-${(i % 2) + 1}`;
       await client.query(`insert into private.course_reviews
-        (subject_id,member_id,reviewer_key,semester,status,grading,published_at)
-        values (9002,${A},${RKA},'${sem}','published','보통',now())`);
+        (subject_id,member_id,actor_alias_id,semester,status,grading,published_at)
+        values (9002,${A},${ALS},'${sem}','published','보통',now())`);
     }
-    let st = (await client.query(`select public.course_review_stats(9002) s`)).rows[0].s;
-    rec("한 사람이 10건 써도 작성자 1명으로 계산(통계 비공개)",
-      st.n_reviewers === 1 && st.disclosure === "none", JSON.stringify(st).slice(0, 70));
+    let st = await stats(9002);
+    rec("한 사람이 10건 써도 작성자 1명(통계 비공개)",
+      st.n_reviewers === 1 && st.disclosure === "none", JSON.stringify(st).slice(0, 60));
 
-    // 서로 다른 작성자 9명 → 아직 full 아님
-    for (let i = 1; i <= 9; i++) {
+    // ★ 실제 9→10 경계 (GPT 요구): 8명 추가 → 9명(full 아님), 1명 더 → 10명(full)
+    for (let i = 1; i <= 8; i++) {
+      const al = await alias(9002, null);
       await client.query(`insert into private.course_reviews
-        (subject_id,member_id,reviewer_key,semester,status,grading,published_at)
-        values (9002,${A},${RK("r" + i)},'2025-1','published','보통',now())`);
+        (subject_id,actor_alias_id,semester,status,grading,published_at)
+        values (9002,${al},'2025-1','published','보통',now())`);
     }
-    st = (await client.query(`select public.course_review_stats(9002) s`)).rows[0].s;
-    rec("작성자 9명(+본인1=10)에서 full 공개", st.disclosure === "full", `n_reviewers=${st.n_reviewers}`);
+    const st9 = await stats(9002);
+    rec("작성자 9명에서는 full 아님", st9.n_reviewers === 9 && st9.disclosure !== "full",
+      `n=${st9.n_reviewers} ${st9.disclosure}`);
 
-    // 희소 셀: 보통 9 / 깐깐함 1 → grading 항목 전체 비공개여야 한다
+    const al10 = await alias(9002, null);
+    await client.query(`insert into private.course_reviews
+      (subject_id,actor_alias_id,semester,status,grading,published_at)
+      values (9002,${al10},'2025-1','published','보통',now())`);
+    const st10 = await stats(9002);
+    rec("작성자 10명에서 full 공개", st10.n_reviewers === 10 && st10.disclosure === "full",
+      `n=${st10.n_reviewers} ${st10.disclosure}`);
+
+    // 희소 셀: 보통 9 / 깐깐함 1 → grading 항목 전체 비공개
     await client.query(`update private.course_reviews set grading='깐깐함'
-       where subject_id=9002 and reviewer_key=${RK("r1")}`);
-    st = (await client.query(`select public.course_review_stats(9002) s`)).rows[0].s;
-    rec("희소 셀(9:1)이면 그 항목 전체를 비공개", st.grading === null, `grading=${JSON.stringify(st.grading)}`);
+       where subject_id=9002 and actor_alias_id=${al10}`);
+    const stSparse = await stats(9002);
+    rec("희소 셀(9:1)이면 그 항목 전체 비공개", stSparse.grading === null,
+      `grading=${JSON.stringify(stSparse.grading)}`);
+
+    // ── 빈 페이지 과금 금지 ──
+    await client.query(`insert into private.course_review_subjects (id, course_key, professor_key, course_name_display, professor_display)
+      values (9003,'평가없는과목','최교수','평가 없는 과목','최교수')`);
+    await client.query(`insert into private.ticket_ledger (member_id,delta,reason,idempotency_key)
+      values (${A},50,'verification_bonus','k-verification-bonus')`);
+    const { rows: [ul] } = await client.query(`select public.unlock_course_reviews(9003) r`);
+    const { rows: [ulCnt] } = await client.query(
+      `select count(*)::int n from private.ticket_ledger where reason='unlock_subject'`);
+    rec("공개 평가 0건인 페이지는 과금하지 않음",
+      ul.r.status === "unavailable" && ulCnt.n === 0, `${ul.r.status}, 원장 ${ulCnt.n}건`);
 
     // ── 가명화 (탈퇴) ──
     await client.query(`select set_config('request.jwt.claims', null, true)`);
-    await mustFail("member_id만 null로 바꾸면서 ref_id를 함께 바꾸는 UPDATE 거부",
+    await mustFail("member_id만 null로 바꾸며 ref_id도 바꾸는 UPDATE 거부",
       `update private.ticket_ledger set member_id=null, ref_id=99999 where id=${paidId}`);
     await mustPass("회원 탈퇴가 append-only 트리거에 막히지 않음", `delete from auth.users where id = ${A}`);
 
@@ -158,22 +193,18 @@ async function main() {
          from private.course_reviews where subject_id=9001`);
     rec("탈퇴해도 강의평 존속 + 탈퇴시각 자동 기록",
       rk2.n > 0 && rk2.m === 0 && rk2.w === rk2.n, `행 ${rk2.n} / member ${rk2.m} / withdrawn ${rk2.w}`);
-
     const { rows: [lg] } = await client.query(
       `select count(*)::int n, count(member_id)::int m from private.ticket_ledger`);
     rec("탈퇴해도 원장 존속(가명화)", lg.n > 0 && lg.m === 0, `행 ${lg.n} / member 남은 것 ${lg.m}`);
-
-    const { rows: [uuidLeak] } = await client.query(
+    const { rows: [leak] } = await client.query(
       `select count(*)::int n from private.ticket_ledger where idempotency_key like '%${A_UUID}%'`);
-    rec("원장 키에 회원 UUID가 남지 않음", uuidLeak.n === 0, `${uuidLeak.n}건`);
+    rec("원장 키에 회원 UUID 미잔존", leak.n === 0, `${leak.n}건`);
 
     // ── 본문 위생 ──
+    const alC = await alias(9001, null);
     await mustFail("공백만 있는 본문 거부",
-      `insert into private.course_reviews (id,subject_id,reviewer_key,semester,status,body)
-       values (9107,9001,${RK("c")},'2025-1','draft','   ')`);
-    await mustFail("reviewer_key 형식(hex64) 위반 거부",
-      `insert into private.course_reviews (id,subject_id,reviewer_key,semester,status)
-       values (9108,9001,'rk-a','2025-1','draft')`);
+      `insert into private.course_reviews (id,subject_id,actor_alias_id,semester,status,body)
+       values (9107,9001,${alC},'2025-1','draft','   ')`);
   } finally {
     await client.query("rollback");
     await client.end();
@@ -181,8 +212,7 @@ async function main() {
 
   const pass = results.filter(Boolean).length;
   console.log(`\n=== 010 행동 검증: ${pass}/${results.length} PASS (dev 스키마 무변경) ===`);
-  console.log("※ 2세션 동시 잠금해제 실측은 010을 dev에 실제 적용해야 가능 —");
-  console.log("  현재 dev 적용이 금지돼 있어 dev 리허설 단계로 미룸(GPT에 보고).");
+  console.log("※ 2세션 동시 잠금해제는 010을 dev에 실제 적용해야 가능 — dev 승격 게이트로 등록(GPT 승인).");
   process.exit(pass === results.length ? 0 : 2);
 }
 main().catch((e) => { console.error("[fail] " + scrub(e.message || String(e), "", dbUrl)); process.exit(1); });

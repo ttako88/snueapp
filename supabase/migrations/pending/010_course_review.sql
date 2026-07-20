@@ -1,11 +1,20 @@
 -- ============================================================
--- 010_course_review.sql — 강의평가 모듈 (1단계) · v2
+-- 010_course_review.sql — 강의평가 모듈 (1단계) · v4
 --
 -- ⚠️ PENDING 초안. 운영은 물론 dev에도 적용하지 않는다.
 --    적용 조건: ①GPT 재검수 통과 ②dev 클린 리허설 ③헌장·처리방침 확정 ④사용자 승인
 --    동결 RC(001~009)는 재개봉하지 않는다.
 --
 -- 설계 근거: docs/COURSE_REVIEW_DESIGN.md · docs/DATA_AND_MODERATION_CHARTER.md
+--
+-- v4 변경 = GPT 3차 검수 REQUIRED 반영:
+--   · reviewer_key(HMAC) 폐기 → subject 범위 **무작위 별칭 테이블**.
+--     HMAC은 키를 교체하면 같은 사람이 v1/v2 두 값을 갖게 되어 n_reviewers가
+--     부풀고 같은 학기 중복 평가까지 뚫린다. 무작위 별칭은 교체할 키가 없다.
+--   · 역분개 행이 원 지급행의 ref_type/ref_id/contribution_id를 그대로 복사하도록 강제
+--   · 신규 원장 INSERT는 member_id 필수 (주인 없는 지급행 생성 차단)
+--   · 공개된 평가가 0건인 페이지에 잠금해제 과금 금지
+--   · latest 정렬에 id desc 추가(동률 시 결정성), exam_tips 서술 필드도 제어문자 거부
 --
 -- v2 변경 = GPT 공동검수 REQUIRED 6건 + Q1~Q4 반영. 고친 결함들:
 --   · 두 과목을 동시에 잠금해제하면 두 요청이 같은 잔액을 읽어 음수가 됨 → 회원 행 FOR UPDATE
@@ -40,6 +49,25 @@ create table if not exists private.course_review_subjects (
   unique (course_key, professor_key)
 );
 
+-- ------------------------------------------------------------
+-- 1-2. 작성자 별칭 (subject 범위)
+--   HMAC 기반 reviewer_key 방식을 폐기하고 **무작위 별칭**으로 간다.
+--   HMAC은 키를 교체하는 순간 같은 사람이 v1/v2 두 값을 갖게 되어
+--   n_reviewers가 부풀고 같은 학기 중복 평가까지 가능해진다(GPT 지적).
+--   무작위 별칭은 교체할 키가 아예 없고, 과목을 넘는 추적도 불가능하다.
+--   탈퇴 시 member_id만 비우면 과거 평가의 "동일 작성자" 집계는 그대로 유지된다.
+-- ------------------------------------------------------------
+create table if not exists private.course_review_actor_aliases (
+  id          uuid primary key default gen_random_uuid(),
+  subject_id  bigint not null references private.course_review_subjects (id) on delete cascade,
+  member_id   uuid references private.members (id) on delete set null,
+  created_at  timestamptz not null default now(),
+  detached_at timestamptz
+);
+-- 한 과목에서 한 회원은 별칭 1개 (탈퇴로 member_id가 비면 유니크 대상에서 빠진다)
+create unique index if not exists course_review_actor_aliases_one
+  on private.course_review_actor_aliases (subject_id, member_id) where member_id is not null;
+
 -- 원문 → canonical 매핑 보존 (표기 흔들림 추적용)
 create table if not exists private.course_review_subject_aliases (
   subject_id      bigint not null references private.course_review_subjects (id) on delete cascade,
@@ -60,12 +88,9 @@ create table if not exists private.course_reviews (
   member_id     uuid    references private.members (id) on delete set null,
   author_withdrawn_at timestamptz,
 
-  -- 표본 중복 방지용 가명키. 대상(subject) 범위로만 안정적이라 과목을 넘나드는
-  -- 추적에 쓸 수 없다. 탈퇴로 member_id가 null이 돼도 distinct 집계가 유지된다.
-  -- 계약(REQUIRED-5): 서버가 subject별 도메인 분리 HMAC-SHA256으로 계산한 hex64.
-  -- 클라이언트가 만들거나 입력할 수 없고, 일반 RPC·로그·오류 응답에 노출하지 않는다.
-  reviewer_key          text     not null check (reviewer_key ~ '^[0-9a-f]{64}$'),
-  reviewer_key_version  smallint not null default 1 check (reviewer_key_version >= 1),
+  -- 작성자 별칭(subject 범위 무작위). 서버만 만들고 클라이언트는 만들거나 입력할 수 없으며,
+  -- 일반 RPC·로그·오류 응답에 노출하지 않는다. 탈퇴로 member_id가 비어도 distinct 집계는 유지된다.
+  actor_alias_id uuid not null references private.course_review_actor_aliases (id) on delete restrict,
 
   -- ★ 기여(contribution) 식별자 — 최초본과 모든 정정본이 **같은 값**을 공유한다.
   --   보상·도움됨·철회·신고는 리뷰 행 id가 아니라 여기에 귀속시킨다.
@@ -118,7 +143,7 @@ create table if not exists private.course_reviews (
 --  제외: corrected(구버전)·withdrawn_by_author·purged
 --        └ corrected를 빼야 "구버전 corrected + 신버전 published" 공존이 가능하다.
 create unique index if not exists course_reviews_one_active
-  on private.course_reviews (subject_id, reviewer_key, semester)
+  on private.course_reviews (subject_id, actor_alias_id, semester)
   where status in ('draft','submitted','published','hidden_by_moderation','preserved_for_case');
 
 -- 정정 분기 금지: 한 구버전을 두 신버전이 대체할 수 없다
@@ -136,8 +161,7 @@ create table if not exists private.exam_tips (
   subject_id   bigint not null references private.course_review_subjects (id) on delete restrict,
   member_id    uuid   references private.members (id) on delete set null,
   author_withdrawn_at timestamptz,
-  reviewer_key text   not null check (reviewer_key ~ '^[0-9a-f]{64}$'),
-  reviewer_key_version smallint not null default 1 check (reviewer_key_version >= 1),
+  actor_alias_id uuid not null references private.course_review_actor_aliases (id) on delete restrict,
   contribution_id uuid not null default gen_random_uuid(),
   semester     text   not null check (semester ~ '^[0-9]{4}-[12]$'),
   status       text   not null default 'draft' check (status in (
@@ -146,8 +170,8 @@ create table if not exists private.exam_tips (
   question_count_approx smallint check (question_count_approx between 0 and 200),
   open_book    boolean,
   time_pressure text  check (time_pressure in ('여유','보통','촉박')),
-  scope_note   text   check (scope_note is null or (btrim(scope_note) <> '' and char_length(scope_note) <= 500)),
-  study_tip    text   check (study_tip  is null or (btrim(study_tip)  <> '' and char_length(study_tip)  <= 1000)),
+  scope_note   text   check (scope_note is null or (btrim(scope_note) <> '' and char_length(scope_note) <= 500 and scope_note !~ E'[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]')),
+  study_tip    text   check (study_tip  is null or (btrim(study_tip)  <> '' and char_length(study_tip)  <= 1000 and study_tip !~ E'[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]')),
   reviewed_at  timestamptz,
   published_at timestamptz,
   purge_after  timestamptz,
@@ -159,7 +183,7 @@ create table if not exists private.exam_tips (
 );
 
 create unique index if not exists exam_tips_one_active
-  on private.exam_tips (subject_id, reviewer_key, semester)
+  on private.exam_tips (subject_id, actor_alias_id, semester)
   where status in ('draft','submitted','published','hidden_by_moderation');
 
 -- ------------------------------------------------------------
@@ -236,6 +260,12 @@ create or replace function private.validate_ticket_clawback()
 returns trigger language plpgsql set search_path='' as $$
 declare o private.ticket_ledger%rowtype;
 begin
+  -- 신규 원장 행은 반드시 회원에 귀속된다. member_id=null 행은 오직 "탈퇴 가명화
+  -- UPDATE"로만 만들어져야 한다(처음부터 주인 없는 지급행이 생기면 추적이 끊긴다).
+  if new.member_id is null then
+    raise exception 'ledger entries must belong to a member at insert time';
+  end if;
+
   if new.reason <> 'clawback' then return new; end if;
   select * into o from private.ticket_ledger l where l.id = new.reverses_entry_id;
   if o.id is null            then raise exception 'reversal target not found'; end if;
@@ -245,6 +275,12 @@ begin
     raise exception 'reversal must belong to the same member';
   end if;
   if new.delta <> -o.delta   then raise exception 'reversal must exactly negate the original'; end if;
+  -- 역분개 행은 원 지급행의 참조정보를 그대로 복사해야 한다 (계보 보존)
+  if new.contribution_id is distinct from o.contribution_id
+     or new.ref_type is distinct from o.ref_type
+     or new.ref_id   is distinct from o.ref_id then
+    raise exception 'reversal must copy ref_type/ref_id/contribution_id of the original';
+  end if;
   return new;
 end $$;
 revoke execute on function private.validate_ticket_clawback() from public, anon, authenticated;
@@ -343,7 +379,7 @@ declare
 begin
   if not authz.is_active_member() then raise exception 'not allowed'; end if;
 
-  select count(*), count(distinct r.reviewer_key)
+  select count(*), count(distinct r.actor_alias_id)
     into v_reviews, v_reviewers
     from private.course_reviews r
    where r.subject_id = p_subject_id and r.status = 'published';
@@ -351,10 +387,10 @@ begin
   if v_reviewers >= 10 then
     return (
       with latest as (
-        select distinct on (r.reviewer_key) r.*
+        select distinct on (r.actor_alias_id) r.*
           from private.course_reviews r
          where r.subject_id = p_subject_id and r.status = 'published'
-         order by r.reviewer_key, r.published_at desc
+         order by r.actor_alias_id, r.published_at desc, r.id desc
       )
       -- ★ 희소 셀 억제 (REQUIRED-4): 작성자가 10명이어도 "보통 9 / 깐깐함 1" 같은
       --   분포는 그 1명의 응답을 사실상 노출한다. 항목 안에 3명 미만인 셀이
@@ -375,11 +411,11 @@ begin
     select g.grading, g.c into v_top, v_top_cnt
       from (
         select l.grading, count(*) c
-          from (select distinct on (r.reviewer_key) r.reviewer_key, r.grading, r.published_at
+          from (select distinct on (r.actor_alias_id) r.actor_alias_id, r.grading, r.published_at
                   from private.course_reviews r
                  where r.subject_id = p_subject_id and r.status = 'published'
                    and r.grading is not null
-                 order by r.reviewer_key, r.published_at desc) l
+                 order by r.actor_alias_id, r.published_at desc, r.id desc) l
          group by l.grading
          order by count(*) desc
          limit 1) g;
@@ -413,8 +449,14 @@ declare
 begin
   if not authz.is_active_member() then raise exception 'not allowed'; end if;
 
-  -- 존재하지 않는 subject에 과금하지 않는다. 응답은 존재 여부를 드러내지 않게 수렴.
-  select exists (select 1 from private.course_review_subjects s where s.id = p_subject_id) into v_exists;
+  -- 빈 페이지에 과금하지 않는다 (REQUIRED-6): 대상이 없거나 **공개된 평가가 0건**이면
+  -- 원장·해제행을 만들지 않고, 두 경우를 같은 응답으로 수렴시킨다(존재 정보 비노출).
+  select exists (
+    select 1 from private.course_review_subjects s
+     where s.id = p_subject_id
+       and exists (select 1 from private.course_reviews r
+                    where r.subject_id = s.id and r.status = 'published')
+  ) into v_exists;
   if not v_exists then return jsonb_build_object('status','unavailable'); end if;
 
   -- 회원 단위 직렬화
@@ -502,13 +544,12 @@ commit;
 -- ============================================================
 -- 다음 배치 (이 초안의 범위 밖)
 --  · submit/correct RPC — 구버전 corrected 전환 + 신버전 생성을 한 트랜잭션으로.
---    supersedes는 같은 subject/reviewer_key/semester만 허용해야 한다.
+--    supersedes는 같은 subject/actor_alias_id/semester만 허용해야 한다.
 --  · operator 승인 RPC (자유서술 사전검토 → published + 지급).
 --    지급 idempotency_key는 review id가 아니라 수강 건 귀속:
---    'review_reward:<reviewer_key>:<subject>:<semester>' — 정정본 재지급 방지.
+--    'review_reward:<contribution_id>' — 별칭을 키 문자열에 넣지 않는다(식별자 분리).
 --  · 신고 연결(private.reports·moderation_cases ↔ course_reviews)
 --  · preserved_for_case ↔ purge 배치 (009 서버잡 패턴 재사용)
 --  · 도움됨 집계와 후기당 상한 +6
 --  · 공개 목록 RPC (작성자 속성 0개, 성적확정 후 묶음 공개 지연)
---  · reviewer_key를 md5 → 서버 비밀키 HMAC으로 교체 (학번 HMAC과 동일 원칙)
--- ============================================================
+--  -- ============================================================

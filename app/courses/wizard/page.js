@@ -639,12 +639,14 @@ function AddSheet({ mode, excludeIds, taken, semester, onAdd, onClose }) {
                             >
                               <CheckBox state={isOff(g, c) ? "none" : "all"} />
                               <span className="min-w-0 flex-1">
+                                {/* 강의 이름을 앞줄에 — 같은 택1 묶음에 다른 과목이 섞여 있어
+                                    (예: 자연과학의이해 ↔ 현대과학의이해) F 재이수 시 어떤 과목인지 구분 필수 */}
                                 <span className="block truncate text-xs font-medium text-[#0c4470]">
-                                  {c.professor}
+                                  {c.name}
                                   {c.section ? ` · ${c.section}분반` : ""}
                                 </span>
                                 <span className="block truncate text-[11px] text-[#0c4470]/45">
-                                  {c.day}{c.periods.join("")}교시 · {c.room}
+                                  {c.professor} · {c.day}{c.periods.join("")}교시 · {c.room}
                                 </span>
                               </span>
                             </button>

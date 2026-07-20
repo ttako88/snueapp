@@ -1,11 +1,14 @@
 -- ============================================================
 -- 009_server_job_rpcs.sql — 서버 잡(maintenance Route) 전용 service_role RPC
 -- ============================================================
--- ⚠️ DRAFT · NOT EXECUTED · post-freeze 추가 migration (Batch 0 RPC 경계 대조 + GPT 검수 반영)
+-- 상태(2026-07-20 활성 승격): post-freeze 추가 migration. dev(uiikgqeoxocpvphlmoqp)
+--   적용·SQL 통합검증 8/8·행동테스트 6+2그룹 PASS 완료 (GPT 승인, 렛저 §8).
+--   원문 SHA-256 faff5f85… 는 dev 검증 시점 본문 기준 — 이 머리말 정리로 파일 해시는
+--   바뀌므로 RC 동결 시 새 해시를 manifest에 기록한다(본문 SQL 무변경).
 --   - 동결본 001~008(SHA 6746127)은 수정하지 않는다. 009는 그 위에 얹는 별도 번호.
 --     (prepare_account_deletion만 CREATE OR REPLACE로 멱등 보강 — GPT 판정 Q4: 001~008 수정이
 --      아니라 명시적 post-freeze 보강으로 허용.)
---   - 원격(dev/prod)에 적용하지 않는다 — GPT 배치 검수 통과 후 dev 리허설 → 재동결.
+--   - 운영(prod) 적용은 런북 Phase 4에서 사용자 GO 후에만.
 --   - 근거: server-jobs/README.md, GATE3_DESIGN v1.3 §4.4·§9·§13, GPT 009 검수 회신.
 --
 -- 설계 규칙(전 함수 공통):

@@ -28,7 +28,7 @@ export const FEATURES = {
 
   // ── 커뮤니티 축 (DB 필요) ──
   courseReview: {
-    enabled: false,
+    enabled: true,
     label: "강의평가",
     summary: "1인1회·수정불가 강의평 + 시험정보(족보) + 티켓 이코노미",
     needsDb: true,

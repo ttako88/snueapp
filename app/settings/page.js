@@ -16,6 +16,10 @@ export default function SettingsPage() {
   const [hiddenKinds, setHiddenKinds] = useState([]); // 숨긴 일정 종류 key 목록
   const { session, profile, loading: authLoading } = useAuth();
 
+  // 심사 콘솔 진입점 노출 여부. 이건 UX 게이트일 뿐이고 실제 권한 경계는
+  // DB 다 — 심사 RPC 들이 actor_role_check('operator') 를 첫 문장에서 부른다.
+  const isReviewer = ["operator", "owner"].includes(profile?.role);
+
   const [setupOpen, setSetupOpen] = useState(false);
   const [formGrade, setFormGrade] = useState(3);
   const [formDept, setFormDept] = useState("");
@@ -139,6 +143,21 @@ export default function SettingsPage() {
             </label>
           ))}
         </div>
+      </section>
+
+      {/* 도움·운영 — 버그 제보는 로그인 없이도 화면은 보이고 안에서 안내한다 */}
+      <section className="rounded-2xl bg-white p-4 shadow-sm">
+        <p className="mb-1 text-xs font-bold text-[#0c4470]/40">도움</p>
+        <Link href="/settings/bug-report" className="flex w-full items-center justify-between">
+          <span className="text-sm font-medium text-[#0c4470]">버그 제보 · 건의</span>
+          <span className="shrink-0 text-xs font-bold text-[#0095da]">보내기 ›</span>
+        </Link>
+        {isReviewer && (
+          <Link href="/admin/verification" className="mt-3 flex w-full items-center justify-between border-t border-black/5 pt-3">
+            <span className="text-sm font-medium text-[#0c4470]">학생 인증 심사</span>
+            <span className="shrink-0 text-xs font-bold text-[#0095da]">운영자 ›</span>
+          </Link>
+        )}
       </section>
 
       <p className="text-center text-[11px] text-[#0c4470]/30">앞으로 추가되는 설정도 여기 모아둘게요</p>

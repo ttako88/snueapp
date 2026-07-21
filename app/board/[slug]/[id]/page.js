@@ -7,6 +7,7 @@ import { boardBySlug } from "../../../lib/boards";
 import { authorLabel, fmtDate } from "../../../lib/board-fmt";
 import { supabase } from "../../../lib/supabase/client";
 import { fetchPost, isPostOwner, updatePost, softDeletePost } from "../../../lib/community/posts";
+import PostActions from "../../../components/PostActions";
 import {
   fetchComments,
   fetchOwnedCommentIds,
@@ -199,6 +200,10 @@ export default function PostDetailPage() {
               </>
             )}
           </article>
+
+            {/* 추천·스크랩·신고 — 편집 중에는 감춘다. 같은 화면에서 두 작업이
+                섞이면 무엇이 저장되는지 헷갈린다. */}
+            {!editing && <PostActions postId={post.id} initialVoteCount={post.vote_count ?? 0} />}
 
           {/* 댓글 */}
           <section className="rounded-2xl bg-white p-4 shadow-sm">

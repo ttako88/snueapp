@@ -48,7 +48,9 @@ export async function createPost({ board, title, body, isAnonymous }) {
 export function fetchPost(id) {
   return supabase
     .from("posts")
-    .select("id, title, body, author_nickname, is_anonymous, created_at, updated_at, deleted_at")
+    // vote_count 는 상호작용 바의 초기값이다. 없으면 0 에서 시작해
+    // 첫 클릭 때 서버 값으로 튀어 사용자가 이상하게 본다.
+    .select("id, title, body, author_nickname, is_anonymous, created_at, updated_at, deleted_at, vote_count")
     .eq("id", id)
     .maybeSingle();
 }

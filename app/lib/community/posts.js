@@ -3,6 +3,7 @@
 // 보안 경계는 여기가 아니라 DB RLS다 — 이 모듈은 "쿼리를 한 곳에 모아
 // 정책 변경 시 수정 지점을 예측 가능하게" 하는 코드 경계일 뿐이다.
 import { supabase } from "../supabase/client";
+import { asBigintParam, invalidIdResult } from "./ids";
 
 // 목록: 삭제 안 된 글, 최신순. 허용 필드만 선택.
 export function fetchBoardPosts(board) {
@@ -52,7 +53,18 @@ export function updatePost(id, { title, body }) {
   return supabase.from("posts").update({ title, body }).eq("id", id);
 }
 
-// soft delete만 — 하드 삭제는 DB 정책상 아무도 불가
+// soft delete만 — 하드 삭제는 DB 정책상 아무도 불가.
+//
+// 직접 UPDATE 가 아니라 definer RPC 를 쓴다. 007_soft_delete_rpc.sql 이
+// authenticated 의 deleted_at 컬럼 UPDATE 권한을 회수했기 때문이다.
+// 근본 원인은 RLS UPDATE 가 결과 행이 SELECT 정책으로도 보이길 요구하는데
+// posts_select 가 `deleted_at is null` 이라, 삭제하는 순간 결과 행이
+// 가시성을 잃어 직접 UPDATE 는 구조적으로 거부된다는 것이다.
+//
+// id 는 bigint 다. Number 로 바꾸면 2^53 을 넘는 순간 값이 뭉개지므로
+// 문자열 그대로 넘긴다. 형식만 검증한다.
 export function softDeletePost(id) {
-  return supabase.from("posts").update({ deleted_at: new Date().toISOString() }).eq("id", id);
+  const p = asBigintParam(id);
+  if (p === null) return Promise.resolve(invalidIdResult());
+  return supabase.rpc("soft_delete_post", { p_post_id: p });
 }

@@ -1,5 +1,6 @@
 // 댓글 데이터 접근 (커뮤니티 도메인 경계 — posts.js와 같은 원칙)
 import { supabase } from "../supabase/client";
+import { asBigintParam, invalidIdResult } from "./ids";
 
 export function fetchComments(postId) {
   return supabase
@@ -24,6 +25,10 @@ export function createComment({ postId, body, isAnonymous }) {
   return supabase.from("comments").insert({ post_id: postId, body, is_anonymous: isAnonymous });
 }
 
+// posts.js 의 softDeletePost 와 같은 이유로 definer RPC 를 경유한다.
+// (007 이 authenticated 의 deleted_at 컬럼 UPDATE 를 회수했다)
 export function softDeleteComment(id) {
-  return supabase.from("comments").update({ deleted_at: new Date().toISOString() }).eq("id", id);
+  const p = asBigintParam(id);
+  if (p === null) return Promise.resolve(invalidIdResult());
+  return supabase.rpc("soft_delete_comment", { p_comment_id: p });
 }

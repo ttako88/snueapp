@@ -58,10 +58,13 @@ async function main() {
 
   head("1. 현재 상태 (PASS_B COMMIT 후)");
   const current = [];
-  for (const o of inv.schemas)   current.push({ kind: "schema", ident: o.ident, owner: o.owner });
-  for (const o of inv.relations) current.push({ kind: "relation", ident: o.ident, owner: o.owner });
-  for (const o of inv.sequences) current.push({ kind: "sequence", ident: o.ident, owner: o.owner });
-  for (const o of inv.routines)  current.push({ kind: "routine", ident: o.ident, owner: o.owner });
+  // namespace 는 반드시 카탈로그(sch)에서 가져온다. ident 를 '.' 로 쪼개면
+  // regprocedure 가 search_path 에 있는 스키마를 생략하기 때문에
+  // public 함수의 namespace 를 엉뚱하게 잡는다.
+  for (const o of inv.schemas)   current.push({ kind: "schema", ident: o.ident, namespace: o.sch, owner: o.owner });
+  for (const o of inv.relations) current.push({ kind: "relation", ident: o.ident, namespace: o.sch, owner: o.owner });
+  for (const o of inv.sequences) current.push({ kind: "sequence", ident: o.ident, namespace: o.sch, owner: o.owner });
+  for (const o of inv.routines)  current.push({ kind: "routine", ident: o.ident, namespace: o.sch, owner: o.owner });
   // default privilege 는 type 에도 적용될 수 있다 — 분모에 넣기 위해 조회한다
   for (const t of await q(
     `select n.nspname||'.'||t.typname ident, pg_get_userbyid(t.typowner) owner
@@ -69,7 +72,8 @@ async function main() {
       where n.nspname = any($1::text[])
         and t.typtype in ('e','d','r','c')
         and not exists (select 1 from pg_class c2 where c2.oid=t.typrelid and c2.relkind<>'c')
-      order by 1`, [names])) current.push({ kind: "type", ident: t.ident, owner: t.owner });
+      order by 1`, [names])) current.push({ kind: "type", ident: t.ident,
+        namespace: t.ident.split(".")[0], owner: t.owner });
 
   const byKind = {};
   for (const o of current) byKind[o.kind] = (byKind[o.kind] || 0) + 1;

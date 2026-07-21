@@ -103,6 +103,19 @@ async function main() {
 
       if (row.fenced_acl === row.drill_acl) { row.classification = "UNCHANGED"; ledger.push(row); continue; }
 
+      // 컬럼 ACL 은 fence 가 전부 회수하면 attacl 이 NULL 이 되어 스냅샷에서
+      // 행 자체가 사라진다. 그 행이 rollback 으로 되살아난 것을 문자열
+      // 'ABSENT' 인 채로 집합 비교에 넘기면 우연히 맞을 뿐 근거가 없다.
+      // 별도 분류로 세우고, fence 문장과 대응되는지 아래에서 교차검증한다.
+      if (row.fenced_acl === "ABSENT") {
+        row.classification = "ROW_ABSENT_IN_FENCED_RESTORED_BY_ROLLBACK";
+        ledger.push(row); continue;
+      }
+      if (row.drill_acl === "ABSENT") {
+        row.classification = "MISSING_AFTER_ROLLBACK";
+        ledger.push(row); continue;
+      }
+
       if (wasNull.has(ident)) {
         // pre-fence NULL → rollback 후 explicit 이면 acldefault 와 같아야 한다
         const t = typeOf.get(ident), ow = ownerOf.get(ident);
@@ -137,6 +150,24 @@ async function main() {
     line("pre-fence NULL 인데 rollback 후에도 NULL",
       ledger.filter((r) => r.classification === "RESTORED_TO_NULL").length
       + ledger.filter((r) => r.classification === "UNCHANGED" && wasNull.has(r.key.split("|")[1])).length + "건");
+
+    head("2b. 되살아난 행 ↔ fence 문장 교차검증");
+    // "unexpected tuple 0" 을 주장하려면, rollback 이 되살린 행이 전부
+    // fence 가 실제로 지운 대상이어야 한다. fence-apply.sql 의 컬럼 REVOKE
+    // 대상과 대조한다.
+    const fenceSql = readFileSync(join(RUN, "fence-apply.sql"), "utf8").toLowerCase();
+    const revived = ledger.filter((r) => r.classification === "ROW_ABSENT_IN_FENCED_RESTORED_BY_ROLLBACK");
+    const unmatched = revived.filter((r) => {
+      const ident = r.key.slice(r.key.indexOf("|") + 1);           // e.g. public.posts.title
+      const parts = ident.split(".");
+      const col = parts.pop(), tbl = parts.join(".");
+      return !(fenceSql.includes(col) && fenceSql.includes(tbl));
+    });
+    line("rollback 이 되살린 행", revived.length);
+    rec("되살린 행이 전부 fence REVOKE 대상과 대응", unmatched.length === 0,
+      unmatched.length ? unmatched.map((r) => r.key).join(", ") : "0");
+    const missingAfter = ledger.filter((r) => r.classification === "MISSING_AFTER_ROLLBACK");
+    rec("missing rollback tuple = 0", missingAfter.length === 0, String(missingAfter.length));
 
     head("3. grantor / grant option (CANONICAL_EXPANDED 재확인)");
     const drillInv = await L.inventory(c, names);
@@ -214,6 +245,8 @@ async function main() {
     fenced_raw_sha256: sha256(fencedRaw.join("\n")),
     formal_evidence_limitations: limitations,
     explicit_unresolved_item_count: unresolvedItems,
+    missing_rollback_tuple_count: ledger.filter((r) => r.classification === "MISSING_AFTER_ROLLBACK").length,
+    revived_row_count: ledger.filter((r) => r.classification === "ROW_ABSENT_IN_FENCED_RESTORED_BY_ROLLBACK").length,
     post_drill: { mutation_privilege: mutation.length, effective_privilege_hash: effHash },
     drill_raw_sha256: sha256(drillRaw.join("\n")),
     tuple_ledger: ledger,

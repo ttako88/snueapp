@@ -145,9 +145,24 @@ export default function Home() {
         </ul>
       </section>
 
-      {/* 학교 서비스 바로가기 (외부 공식 사이트로 이동) */}
+      {/* 학교 서비스 바로가기 */}
       <section>
         <h2 className="mb-2 text-sm font-bold text-[#0c4470]">🔗 학교 바로가기</h2>
+        <Link
+          href="/campus"
+          className="mb-2 flex items-center gap-3 rounded-2xl bg-white p-3.5 shadow-sm active:bg-[#eaf6fd]"
+        >
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#eaf6fd] text-xl">
+            🗺️
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block font-bold text-[#0c4470]">캠퍼스 안내</span>
+            <span className="block truncate text-xs text-[#0c4470]/50">
+              오시는 길 · 건물 · 교내 기관
+            </span>
+          </span>
+          <span className="shrink-0 text-sm text-[#0c4470]/30">›</span>
+        </Link>
         <a
           href="https://lib.snue.ac.kr/umobile/"
           target="_blank"

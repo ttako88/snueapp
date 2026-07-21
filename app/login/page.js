@@ -75,20 +75,24 @@ export default function LoginPage() {
       }
       setBusy(true);
       setMsg(null);
-      const { data, error } = await supabase
-        .from("profiles")
-        .insert({ id: session.user.id, nickname: nick })
-        .select()
-        .single();
-      setBusy(false);
+      // 신 스키마에는 public.profiles 가 없다. 최초 닉네임은 definer RPC 로만
+      // 정한다(001 이 private 스키마 USAGE 를 회수해 직접 쓰기 경로가 없다).
+      const { error } = await supabase.rpc("set_initial_nickname", { p_nick: nick });
       if (error) {
+        setBusy(false);
+        // 함수가 중복을 unique_violation 으로 잡아 'nickname in use' 로 바꿔 던진다.
+        // 코드가 아니라 메시지로 판별해야 하는 이유다.
+        const dup = /nickname in use/i.test(error.message || "");
         setMsg({
           type: "error",
-          text: error.code === "23505" ? "이미 사용 중인 닉네임이에요. 다른 걸로 지어주세요." : `저장에 실패했어요 (${error.message})`,
+          text: dup ? "이미 사용 중인 닉네임이에요. 다른 걸로 지어주세요." : `저장에 실패했어요 (${error.message})`,
         });
         return;
       }
-      setProfile(data);
+      // RPC 는 void 를 돌려주므로 저장된 행을 다시 읽어 화면 상태를 맞춘다.
+      const { data: rows } = await supabase.rpc("get_my_member");
+      setBusy(false);
+      setProfile(Array.isArray(rows) ? rows[0] ?? null : rows ?? null);
       router.push("/board");
     }
     return (
@@ -121,19 +125,31 @@ export default function LoginPage() {
   // ── 비로그인: 이메일 → 로그인 링크 메일 ──
   async function sendLink() {
     const em = email.trim();
-    if (!SNUE_EMAIL_RE.test(em)) {
-      setMsg({ type: "error", text: "서울교대 이메일(@snue.ac.kr 계열)만 가입할 수 있어요." });
-      return;
-    }
+    // 도메인 제한은 "신규 가입"에만 건다. 기존 계정은 도메인과 무관하게
+    // 로그인할 수 있어야 한다 — 제한을 도입하기 전에 만들어진 계정을
+    // 잠가버리면 본인도 들어올 수 없다(실제로 그 일이 있었다).
+    //
+    // shouldCreateUser 로 그 둘을 가른다. false 면 계정이 있을 때만 링크가
+    // 나가고 없으면 거부된다. 클라이언트에서 계정 존재를 조회하지 않으므로
+    // 이메일 존재 여부가 새어나가지도 않는다.
+    const isSnue = SNUE_EMAIL_RE.test(em);
     setBusy(true);
     setMsg(null);
     const { error } = await supabase.auth.signInWithOtp({
       email: em,
-      options: { emailRedirectTo: `${window.location.origin}/login` },
+      options: {
+        emailRedirectTo: `${window.location.origin}/login`,
+        shouldCreateUser: isSnue,
+      },
     });
     setBusy(false);
     if (error) {
-      setMsg({ type: "error", text: `메일 발송에 실패했어요 (${error.message})` });
+      setMsg({
+        type: "error",
+        text: isSnue
+          ? `메일 발송에 실패했어요 (${error.message})`
+          : "서울교대 이메일(@snue.ac.kr 계열)로만 새로 가입할 수 있어요. 기존 계정이라면 다시 시도해 주세요.",
+      });
       return;
     }
     setStep("sent");

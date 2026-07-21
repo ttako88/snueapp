@@ -30,14 +30,19 @@ export function useAuth() {
       setProfile(null);
       return;
     }
+    // 신 스키마에는 public.profiles 가 없다. 회원 정보는 private.members 에
+    // 있고 클라이언트는 그 스키마에 접근할 수 없다(001 이 USAGE 를 회수).
+    // 정해진 통로는 definer RPC 다. private 를 직접 읽는 우회는 하지 않는다.
+    //
+    // get_my_member 는 setof 를 돌려주므로 행이 없으면 빈 배열이다.
+    // 닉네임을 아직 안 만든 상태는 "행이 있고 nickname 이 null" 이다.
+    // 이 둘을 구분하지 않으면 온보딩 화면이 안 뜬다.
     setProfileLoading(true);
     supabase
-      .from("profiles")
-      .select("id, nickname")
-      .eq("id", session.user.id)
-      .maybeSingle()
+      .rpc("get_my_member")
       .then(({ data }) => {
-        setProfile(data ?? null);
+        const row = Array.isArray(data) ? data[0] : data;
+        setProfile(row && row.nickname ? row : null);
         setProfileLoading(false);
       });
   }, [session]);

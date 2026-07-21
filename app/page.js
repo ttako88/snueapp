@@ -114,6 +114,23 @@ export default function Home() {
         </ul>
       </section>
 
+      {/* 실습 — 실습 기간엔 매일 여는 화면이 되게 위쪽에 둔다 */}
+      <section>
+        <Link
+          href="/practicum"
+          className="flex items-center gap-3 rounded-2xl bg-gradient-to-r from-[#0095da] to-[#00b4d8] p-4 shadow-sm active:opacity-90"
+        >
+          <span className="text-2xl">🎒</span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-bold text-white">실습</span>
+            <span className="block text-[11px] text-white/80">
+              실습학교 급식·체크리스트·제출서류
+            </span>
+          </span>
+          <span className="shrink-0 text-white/70">›</span>
+        </Link>
+      </section>
+
       {/* 최신 공지 */}
       <section>
         <div className="mb-2 flex items-center justify-between">

@@ -12,7 +12,8 @@
 // 입력받는 값 (엔터만 치면 건너뜀 — 나중에 다시 실행해 채워도 됨):
 //   PROD_DB_URL          운영 Postgres 접속문자열
 //   OWNER_REAL_NAME      owner 부트스트랩용 실명
-//   STUDENT_NO_HMAC_KEY_V1  학번 HMAC 키 (없으면 이 스크립트가 생성 제안)
+//   학번 8자리          → 입력 즉시 HMAC으로 변환, 원문은 저장하지 않음
+//   (HMAC 키가 없으면 자동 생성)
 //
 // 안전장치:
 //   · TTY가 아니면 즉시 중단(파이프·CI로 흘리지 못하게)
@@ -24,7 +25,7 @@
 import { writeFileSync, readFileSync, existsSync, chmodSync } from "node:fs";
 import { resolve } from "node:path";
 import { stdin, stdout, exit } from "node:process";
-import { randomBytes } from "node:crypto";
+import { randomBytes, createHmac } from "node:crypto";
 import { PROD_REF, DEV_REF, refOf } from "./dev-url.mjs";
 
 const FILE = resolve(process.cwd(), ".env.prod.local");
@@ -106,14 +107,27 @@ async function main() {
   const name = await askHidden("OWNER_REAL_NAME (owner 부트스트랩용 실명): ");
   if (name) cur.OWNER_REAL_NAME = name;
 
-  // 3) 학번 HMAC 키 — 없으면 생성해 준다
+  // 3) 학번 HMAC 키 — 없으면 조용히 생성 (물어볼 이유가 없다)
   if (!cur.STUDENT_NO_HMAC_KEY_V1) {
-    const ans = await askHidden("학번 HMAC 키가 없습니다. 새로 생성할까요? (y 입력): ");
-    if (ans.toLowerCase() === "y") {
-      cur.STUDENT_NO_HMAC_KEY_V1 = randomBytes(32).toString("hex");
-      cur.STUDENT_NO_HMAC_CURRENT_VERSION = "1";
-      console.log("  → 새 키를 생성해 저장했습니다(화면 비표시).");
+    cur.STUDENT_NO_HMAC_KEY_V1 = randomBytes(32).toString("hex");
+    cur.STUDENT_NO_HMAC_CURRENT_VERSION = "1";
+    console.log("  (학번 HMAC 키가 없어 새로 생성했습니다 — 화면 비표시)");
+  }
+
+  // 4) 학번 → 여기서 바로 HMAC까지 만든다.
+  //    별도 스크립트를 두 번 돌리게 하지 않는다. 원문은 메모리에서만 쓰고
+  //    **파일에도 화면에도 남기지 않으며**, 저장되는 건 hex 64자뿐이다.
+  const sid = await askHidden("학번 8자리 (입력 즉시 HMAC으로 변환, 원문 미저장): ");
+  if (sid) {
+    if (!/^[0-9]{8}$/.test(sid)) {
+      console.error("[거부] 학번은 숫자 8자리여야 합니다. 저장하지 않았습니다.");
+      exit(2);
     }
+    const ver = parseInt(cur.STUDENT_NO_HMAC_CURRENT_VERSION, 10);
+    cur.OWNER_STUDENT_NO_HMAC = createHmac("sha256", cur[`STUDENT_NO_HMAC_KEY_V${ver}`])
+      .update(sid).digest("hex");
+    cur.OWNER_HMAC_KEY_VERSION = String(ver);
+    console.log("  → HMAC 생성 완료. 학번 원문은 저장하지 않았습니다.");
   }
 
   const body = Object.entries(cur).map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
@@ -121,12 +135,12 @@ async function main() {
   try { chmodSync(FILE, 0o600); } catch {}
 
   console.log("\n저장 완료: .env.prod.local (git 비추적)");
-  for (const k of ["PROD_DB_URL", "OWNER_REAL_NAME", "STUDENT_NO_HMAC_KEY_V1", "STUDENT_NO_HMAC_CURRENT_VERSION"]) {
-    console.log(`  ${k.padEnd(30)} ${mask(cur[k])}`);
+  for (const k of ["PROD_DB_URL", "OWNER_REAL_NAME", "OWNER_STUDENT_NO_HMAC",
+                   "OWNER_HMAC_KEY_VERSION", "STUDENT_NO_HMAC_KEY_V1"]) {
+    console.log(`  ${k.padEnd(24)} ${mask(cur[k])}`);
   }
-  console.log("\n다음: 학번은 이 파일에 넣지 말고, 아래를 본인 터미널에서 실행해 HMAC만 만들어 주세요.");
-  console.log("  node scripts/manual/compute-student-hmac.mjs");
-  console.log("  (학번 원문은 그 프로세스 밖으로 나가지 않고, 결과 hex만 남습니다)");
+  console.log("\n이걸로 끝입니다. 나머지는 Claude가 이 파일을 읽어 진행합니다.");
+  console.log("(학번 원문은 파일·화면·로그 어디에도 남지 않았습니다)");
 }
 
 main().catch((e) => { console.error("[fail]", e.message); exit(1); });

@@ -78,8 +78,12 @@ function scanClient(root) {
         cols.add(mm[1]);
       uses.push({ kind: "table", name: m[1], columns: [...cols], file: rel });
     }
-    for (const m of src.matchAll(/\.rpc\(\s*["'`](\w+)["'`]/g))
-      uses.push({ kind: "rpc", name: m[1], file: rel });
+    // .rpc("f", { p_x: ... }) — 인자 이름까지 뽑는다. 이름이 틀리면
+    // PostgREST 가 함수를 못 찾아 런타임에서만 터진다.
+    for (const m of src.matchAll(/\.rpc\(\s*["'`](\w+)["'`]\s*(?:,\s*\{([^}]{0,300})\})?/g)) {
+      const args = m[2] ? [...m[2].matchAll(/(\w+)\s*:/g)].map((x) => x[1]) : [];
+      uses.push({ kind: "rpc", name: m[1], args, file: rel });
+    }
   }
   return uses;
 }
@@ -130,15 +134,42 @@ async function main() {
     }
   }
 
-  head("3. RPC 존재 대조");
+  head("3. RPC 대조 — 존재 · 인자 이름 · 호출 role 권한");
+  // 존재만 보면 부족하다. PostgREST 는 인자 이름으로 함수를 고르므로
+  // 이름이 어긋나면 "함수를 찾을 수 없음" 으로 런타임에서만 터진다.
+  // 권한도 본다 — 존재해도 EXECUTE 가 없으면 호출이 막힌다.
   for (const f of rpcs) {
-    const n = Number((await q(`select count(*) v from pg_proc p join pg_namespace n on n.oid=p.pronamespace
-      where n.nspname='public' and p.proname=$1::text`, [f]))[0].v);
-    if (n === 0) {
-      findings.push({ severity: "MISSING_RPC", target: `public.${f}()`,
+    const rows = await q(`select p.oid::regprocedure::text sig,
+        coalesce(p.proargnames, '{}') argnames,
+        pg_get_function_identity_arguments(p.oid) idargs,
+        has_function_privilege('authenticated', p.oid, 'EXECUTE') auth_exec,
+        has_function_privilege('anon', p.oid, 'EXECUTE') anon_exec
+      from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+     where n.nspname='public' and p.proname=$1::text`, [f]);
+    if (rows.length === 0) {
+      findings.push({ severity: "MISSING_RPC", target: `public.${f}`,
         files: [...new Set(uses.filter((u) => u.name === f).map((u) => u.file))] });
       console.log(`  ⛔ MISSING_RPC     public.${f}`);
-    } else console.log(`  OK                public.${f} (오버로드 ${n})`);
+      continue;
+    }
+    const wanted = [...new Set(uses.filter((u) => u.name === f).flatMap((u) => u.args ?? []))];
+    // 오버로드 중 하나라도 클라이언트 인자 집합을 받아들이면 통과
+    const match = rows.find((r) => wanted.every((w) => (r.argnames || []).includes(w)));
+    if (!match) {
+      findings.push({ severity: "RPC_ARG_MISMATCH", target: `public.${f}`,
+        client_args: wanted, db_args: rows.map((r) => r.argnames),
+        files: [...new Set(uses.filter((u) => u.name === f).map((u) => u.file))] });
+      console.log(`  ⛔ RPC_ARG_MISMATCH public.${f} — 클라이언트 [${wanted.join(", ")}] vs DB [${rows.map((r) => (r.argnames || []).join(",")).join(" | ")}]`);
+      continue;
+    }
+    if (!match.auth_exec) {
+      findings.push({ severity: "RPC_NO_EXECUTE", target: match.sig, role: "authenticated",
+        files: [...new Set(uses.filter((u) => u.name === f).map((u) => u.file))] });
+      console.log(`  ⛔ RPC_NO_EXECUTE  ${match.sig} — authenticated 에게 EXECUTE 없음`);
+      continue;
+    }
+    console.log(`  OK                ${match.sig}`);
+    console.log(`      인자 [${wanted.join(", ") || "없음"}]  authenticated=${match.auth_exec}  anon=${match.anon_exec}`);
   }
 
   await c.query("rollback");

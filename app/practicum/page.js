@@ -125,6 +125,19 @@ export default function PracticumPage() {
         )}
       </section>
 
+      {/* ── 지도안 만들기 ── */}
+      <Link href="/practicum/lesson-plan"
+        className="flex items-center gap-3 rounded-2xl bg-white p-4 shadow-sm active:bg-[#eaf6fd]">
+        <span className="text-xl">📝</span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-bold text-[#0c4470]">지도안 만들기</span>
+          <span className="block text-[11px] text-[#0c4470]/45">
+            교과·학년·수업모형 고르면 약안·세안 초안이 나와요
+          </span>
+        </span>
+        <span className="shrink-0 text-[#0c4470]/30">›</span>
+      </Link>
+
       {/* ── 탭 ── */}
       <div className="flex gap-1.5">
         {[["today", "오늘"], ["prep", "준비"], ["info", "안내"]].map(([k, label]) => (

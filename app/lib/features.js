@@ -35,7 +35,7 @@ export const FEATURES = {
     requires: "Gate 4a 운영배포 완료 (회원모델·역할 필요)",
   },
   boardNotice: {
-    enabled: false,
+    enabled: true,
     label: "게시판 공지 고정",
     summary: "운영자/owner가 게시판별 공지를 상단 고정",
     needsDb: true,

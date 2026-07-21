@@ -4,13 +4,19 @@
 // 정책 변경 시 수정 지점을 예측 가능하게" 하는 코드 경계일 뿐이다.
 import { supabase } from "../supabase/client";
 import { asBigintParam, invalidIdResult } from "./ids";
+import { resolveBoardId, unknownBoardResult } from "./boards";
 
 // 목록: 삭제 안 된 글, 최신순. 허용 필드만 선택.
-export function fetchBoardPosts(board) {
+//
+// 라우트는 슬러그를 주지만 신 스키마는 board_id 로 참조한다.
+// 슬러그를 그대로 넣지 않고 boards 에서 해석한다.
+export async function fetchBoardPosts(slug) {
+  const boardId = await resolveBoardId(slug);
+  if (boardId === null) return unknownBoardResult();
   return supabase
     .from("posts")
     .select("id, title, author_nickname, is_anonymous, created_at")
-    .eq("board", board)
+    .eq("board_id", boardId)
     .is("deleted_at", null)
     .order("id", { ascending: false });
 }
@@ -27,10 +33,14 @@ export async function fetchCommentCounts(postIds) {
   return counts;
 }
 
-export function createPost({ board, title, body, isAnonymous }) {
+// board 는 슬러그로 들어온다. board_id 로 번역해 넣는다.
+// author_nickname 은 클라이언트가 정하지 않는다 — 트리거가 채운다.
+export async function createPost({ board, title, body, isAnonymous }) {
+  const boardId = await resolveBoardId(board);
+  if (boardId === null) return unknownBoardResult();
   return supabase
     .from("posts")
-    .insert({ board, title, body, is_anonymous: isAnonymous })
+    .insert({ board_id: boardId, title, body, is_anonymous: isAnonymous })
     .select("id")
     .single();
 }

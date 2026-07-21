@@ -75,20 +75,24 @@ export default function LoginPage() {
       }
       setBusy(true);
       setMsg(null);
-      const { data, error } = await supabase
-        .from("profiles")
-        .insert({ id: session.user.id, nickname: nick })
-        .select()
-        .single();
-      setBusy(false);
+      // 신 스키마에는 public.profiles 가 없다. 최초 닉네임은 definer RPC 로만
+      // 정한다(001 이 private 스키마 USAGE 를 회수해 직접 쓰기 경로가 없다).
+      const { error } = await supabase.rpc("set_initial_nickname", { p_nick: nick });
       if (error) {
+        setBusy(false);
+        // 함수가 중복을 unique_violation 으로 잡아 'nickname in use' 로 바꿔 던진다.
+        // 코드가 아니라 메시지로 판별해야 하는 이유다.
+        const dup = /nickname in use/i.test(error.message || "");
         setMsg({
           type: "error",
-          text: error.code === "23505" ? "이미 사용 중인 닉네임이에요. 다른 걸로 지어주세요." : `저장에 실패했어요 (${error.message})`,
+          text: dup ? "이미 사용 중인 닉네임이에요. 다른 걸로 지어주세요." : `저장에 실패했어요 (${error.message})`,
         });
         return;
       }
-      setProfile(data);
+      // RPC 는 void 를 돌려주므로 저장된 행을 다시 읽어 화면 상태를 맞춘다.
+      const { data: rows } = await supabase.rpc("get_my_member");
+      setBusy(false);
+      setProfile(Array.isArray(rows) ? rows[0] ?? null : rows ?? null);
       router.push("/board");
     }
     return (

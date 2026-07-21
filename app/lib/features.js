@@ -28,11 +28,11 @@ export const FEATURES = {
 
   // ── 커뮤니티 축 (DB 필요) ──
   courseReview: {
-    enabled: true,
+    enabled: false,
     label: "강의평가",
     summary: "1인1회·수정불가 강의평 + 시험정보(족보) + 티켓 이코노미",
     needsDb: true,
-    requires: "Gate 4a 운영배포 완료 (회원모델·역할 필요)",
+    requires: "과목 마스터 적재 (private.course_review_subjects 가 비어 있으면 평가 대상이 없다)",
   },
   boardNotice: {
     enabled: true,

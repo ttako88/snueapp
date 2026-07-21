@@ -774,6 +774,13 @@ begin
     return jsonb_build_object('status','not_pending');
   end if;
 
+  -- 자기 정정본을 스스로 승인·반려할 수 없다. 사전검토의 의미가 없어진다.
+  -- (1인 owner의 자유서술 정정은 다른 심사자가 생길 때까지 기존 공개본을 유지하거나
+  --  본인이 철회하는 것으로 수렴한다 — 자동 승인 경로를 만들지 않는다.)
+  if v_pending.member_id is not null and v_pending.member_id = auth.uid() then
+    raise exception 'cannot review your own correction';
+  end if;
+
   if p_approve then
     -- 기존 공개본을 내리고 정정본을 올린다 — 같은 트랜잭션
     update private.course_reviews r

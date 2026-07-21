@@ -34,8 +34,10 @@ create table if not exists private.bug_reports (
   app_path    text check (app_path is null or app_path ~ '^/[A-Za-z0-9/_\-\[\]]{0,100}$'),
   app_version text check (app_version is null or app_version ~ '^[A-Za-z0-9._+-]{1,40}$'),
 
+  -- expired_unattended는 "운영 판단"이 아니라 **방치**다. wont_fix로 뭉뚱그리면
+  -- 검토해서 안 고치기로 한 것과 아무도 안 본 것이 구분되지 않는다. (013-R6)
   status      text not null default 'open' check (status in
-                ('open','triaged','in_progress','resolved','wont_fix','duplicate')),
+                ('open','triaged','in_progress','resolved','wont_fix','duplicate','expired_unattended')),
   duplicate_of bigint references private.bug_reports (id),
   operator_note text check (operator_note is null or
                  (btrim(operator_note) <> '' and char_length(operator_note) <= 1000
@@ -57,7 +59,7 @@ create table if not exists private.bug_reports (
   -- (013-R4) 종결이면 처리시각 필수, **비종결이면 처리시각이 남아 있으면 안 된다**
   -- (종결에서 open으로 되돌릴 때 옛 handled_at이 남는 것을 막는다)
   check (
-    (status in ('resolved','wont_fix','duplicate') and handled_at is not null)
+    (status in ('resolved','wont_fix','duplicate','expired_unattended') and handled_at is not null)
     or (status in ('open','triaged','in_progress') and handled_at is null)
   )
 );
@@ -142,7 +144,12 @@ begin
     raise exception 'duplicate status requires duplicate_of (and vice versa)';
   end if;
 
-  -- (013-R4) 운영자 간 "마지막 쓰기 승리"를 막기 위해 대상 행을 잠근다
+  -- (013-R4) 운영자 간 "마지막 쓰기 승리"를 막기 위해 대상 행을 잠근다.
+  -- 두 행을 잡을 때는 **id 오름차순**으로 — A→B와 B→A를 동시에 처리할 때
+  -- 불필요한 교착을 줄인다(FOLLOW-UP).
+  if p_duplicate_of is not null and p_duplicate_of < p_id then
+    perform 1 from private.bug_reports b where b.id = p_duplicate_of for update;
+  end if;
   select * into v_cur from private.bug_reports b where b.id = p_id for update;
   if v_cur.id is null then raise exception 'not found'; end if;
   if v_cur.withdrawn_at is not null then raise exception 'report was withdrawn'; end if;
@@ -211,6 +218,63 @@ begin
 end $$;
 revoke execute on function public.withdraw_bug_report(bigint) from public, anon, authenticated;
 grant  execute on function public.withdraw_bug_report(bigint) to authenticated;
+
+-- ------------------------------------------------------------
+-- (013-R6) 방치된 제보 자동 종료
+--   open/triaged/in_progress가 영구히 남으면 개인정보가 무기한 존속한다.
+--   24개월 미처리면 expired_unattended로 닫고 12개월 뒤 파기 예약.
+--   ※ wont_fix로 닫지 않는다 — "검토해서 안 고치기로 함"과 "아무도 안 봄"은 다르다.
+-- ------------------------------------------------------------
+create or replace function public.job_expire_unattended_bug_reports()
+returns integer language plpgsql security definer set search_path='' as $$
+declare v_n integer;
+begin
+  update private.bug_reports b
+     set status = 'expired_unattended',
+         handled_at = clock_timestamp(),
+         purge_after = clock_timestamp() + interval '12 months',
+         updated_at = clock_timestamp()
+   where b.status in ('open','triaged','in_progress')
+     and b.updated_at < now() - interval '24 months';
+  get diagnostics v_n = row_count;
+  return v_n;
+end $$;
+revoke execute on function public.job_expire_unattended_bug_reports() from public, anon, authenticated;
+grant  execute on function public.job_expire_unattended_bug_reports() to service_role;
+
+-- ------------------------------------------------------------
+-- (013-R7) 보존기한 지난 제보 파기 — duplicate 계열 순서 주의
+--   canonical이 먼저 지워지면 이를 참조하는 duplicate 행의 FK 때문에 배치가 실패한다.
+--   ON DELETE CASCADE는 쓰지 않는다 — 아직 기한이 남은 제보까지 지워버린다.
+--   → ①자식 duplicate 먼저 ②그 계열이 전부 만료된 canonical만 나중에.
+-- ------------------------------------------------------------
+create or replace function public.job_purge_bug_reports(p_limit int default 500)
+returns integer language plpgsql security definer set search_path='' as $$
+declare v_child int; v_parent int;
+begin
+  -- ① 자식(duplicate) 먼저
+  delete from private.bug_reports b
+   where b.id in (
+     select b2.id from private.bug_reports b2
+      where b2.purge_after is not null and b2.purge_after <= now()
+        and b2.duplicate_of is not null
+      limit greatest(p_limit, 1));
+  get diagnostics v_child = row_count;
+
+  -- ② canonical은 자신을 참조하는 제보가 하나도 안 남았을 때만
+  delete from private.bug_reports b
+   where b.id in (
+     select b2.id from private.bug_reports b2
+      where b2.purge_after is not null and b2.purge_after <= now()
+        and b2.duplicate_of is null
+        and not exists (select 1 from private.bug_reports c where c.duplicate_of = b2.id)
+      limit greatest(p_limit, 1));
+  get diagnostics v_parent = row_count;
+
+  return v_child + v_parent;
+end $$;
+revoke execute on function public.job_purge_bug_reports(int) from public, anon, authenticated;
+grant  execute on function public.job_purge_bug_reports(int) to service_role;
 
 -- 탈퇴 시 제보는 남기고 연결만 끊는다 (010과 같은 원칙)
 create or replace function private.mark_bug_reporter_withdrawn()

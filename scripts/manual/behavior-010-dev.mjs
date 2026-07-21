@@ -278,6 +278,18 @@ async function main() {
     await actAs(OP_UUID);
     await client.query(`select public.review_course_correction(${clr.new_review_id}, true, '본문 삭제 승인')`);
 
+    // 운영자가 자기 정정본을 스스로 승인할 수 없다
+    await client.query(`update private.members set role='operator' where id='${A_UUID}'`);
+    await actAs(A_UUID);
+    const selfCorr = (await client.query(
+      `select public.correct_course_review(${clr.new_review_id}, null, null, null, null, null, '자가 승인 시도', true) r`)).rows[0].r;
+    await mustFail("자기 정정본은 본인이 심사 불가",
+      `select public.review_course_correction(${selfCorr.new_review_id}, true, '내가 쓴 것')`);
+    await actAs(OP_UUID);
+    await client.query(`select public.review_course_correction(${selfCorr.new_review_id}, false, '정리')`);
+    await client.query(`update private.members set role='member' where id='${A_UUID}'`);
+    await actAs(A_UUID);
+
     // 사건 보존 중인 평가는 정정 금지
     await client.query(`update private.course_reviews set status='preserved_for_case' where id=${clr.new_review_id}`);
     await actAs(A_UUID);

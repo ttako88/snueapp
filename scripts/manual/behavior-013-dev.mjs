@@ -133,14 +133,36 @@ async function main() {
       wd.app_path === null && wd.w === true && wd.p === true,
       `title=${wd.title}`);
 
+    // ── (R6) 방치 제보 자동 종료 ──
+    await client.query(`update private.bug_reports set status='open', handled_at=null,
+      updated_at = now() - interval '25 months' where id=${d2.id}`);
+    const { rows: [ex] } = await client.query(`select public.job_expire_unattended_bug_reports() n`);
+    const { rows: [exr] } = await client.query(
+      `select status, handled_at is not null h, purge_after is not null p from private.bug_reports where id=${d2.id}`);
+    rec("24개월 방치 제보는 expired_unattended로 자동 종료(wont_fix 아님)",
+      ex.n >= 1 && exr.status === "expired_unattended" && exr.h === true && exr.p === true,
+      `${exr.status}`);
+
+    // ── (R7) duplicate 계열 파기 순서 ──
+    // canonical(d2)이 먼저 지워지면 이를 참조하는 d1의 FK 때문에 배치가 실패한다
+    await client.query(`update private.bug_reports set purge_after = now() - interval '1 day'
+      where id in (${d1.id}, ${d2.id})`);
+    const { rows: [pg] } = await client.query(`select public.job_purge_bug_reports(500) n`);
+    const { rows: [left] } = await client.query(
+      `select count(*)::int n from private.bug_reports where id in (${d1.id}, ${d2.id})`);
+    rec("파기 배치가 duplicate→canonical 순서로 동작(FK 위반 없음)",
+      pg.n >= 2 && left.n === 0, `삭제 ${pg.n}건, 남은 ${left.n}건`);
+
     // ── 탈퇴 후 존속 ──
     await client.query(`select set_config('request.jwt.claims', null, true)`);
     await mustPass("제보자 탈퇴 가능", `delete from auth.users where id = '${ME}'`);
     const { rows: [after] } = await client.query(
       `select count(*)::int n, count(member_id)::int m, count(reporter_withdrawn_at)::int w
          from private.bug_reports where reporter_withdrawn_at is not null or member_id is null`);
+    // 앞선 파기 테스트가 일부 행을 지우므로 고정 개수 대신 성질로 검사한다
     rec("탈퇴해도 제보 존속(연결만 끊김 + 시각 기록)",
-      after.n === 3 && after.m === 0 && after.w === 3, `행 ${after.n} / member ${after.m} / withdrawn ${after.w}`);
+      after.n > 0 && after.m === 0 && after.w === after.n,
+      `행 ${after.n} / member ${after.m} / withdrawn ${after.w}`);
   } finally {
     await client.query("rollback");
     await client.end();

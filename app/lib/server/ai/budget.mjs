@@ -1,51 +1,42 @@
 // ============================================================
-// budget.mjs — AI 호출 비용 상한 (서버 전용)
+// budget.mjs — AI 호출 비용 상한 (서버 전용, rev2)
 // ============================================================
-// 왜 이게 먼저인가
-//   AI 지도안 생성은 **소유자 지갑에서 실제 돈이 나간다.** 버그 하나나
-//   어뷰징 한 번이면 카드가 긁힌다. 기능보다 이 장치가 먼저 있어야 한다.
+// 보장해야 하는 불변식: **AI 호출 총비용이 KST 일일 한도를 넘을 수 없다.**
 //
-//   소유자 확인 사항(2026-07-22): 원가는 세안 1건당 Gemini 3 Flash ₩20 /
-//   Claude Haiku ₩35 수준. 하루 총 5,000원(≈150~250회)을 넘으면 자동 차단.
+// rev1 은 견적(estimate)을 예약했는데, 실제 비용이 견적을 넘으면 상한이 샜다.
+// rev2 는 **그 호출이 낼 수 있는 최대 비용**을 계산해 예약한다. 그러려면
+// 입력·출력 토큰 양쪽에 기계적 상한이 있어야 한다 —
+//   · 출력은 API 의 max_output_tokens 로 묶는다
+//   · 입력은 프롬프트 길이를 서버가 자르고, 자른 뒤 길이로 상한을 계산한다
+// 이 둘이 없으면 "최대 비용" 이라는 말 자체가 성립하지 않는다.
 //
-// 설계
-//   · 상한은 **금액**으로 잡는다. 호출 횟수로 잡으면 모델을 바꿀 때마다
-//     의미가 달라진다.
-//   · 일일 상한과 사용자별 상한을 따로 둔다. 한 사람이 하루치를 다 태우면
-//     나머지 사용자가 못 쓴다.
-//   · 상한에 걸리면 **거부한다.** 큐에 넣거나 나중에 처리하지 않는다 —
-//     그러면 다음 날 몰려서 또 터진다.
-//   · 집계는 DB 에 남긴다. 서버 인스턴스가 여러 개일 때 메모리 카운터는
-//     의미가 없다(Vercel 은 요청마다 다른 인스턴스일 수 있다).
+// 한도 값은 DB(private.ai_budget_config)가 단일 출처다. 여기서 넘기지 않는다 —
+// 호출부 오류 하나로 상한이 통째로 무력화되기 때문이다.
 // ============================================================
 
 if (typeof window !== "undefined") {
   throw new Error("ai/budget.mjs 는 서버 전용입니다");
 }
 
-/** 원화 기준. 환경변수로 덮어쓸 수 있게 해서 운영 중 조정 가능하게 둔다. */
-export const BUDGET = {
-  dailyTotalKrw: Number(process.env.AI_DAILY_BUDGET_KRW ?? 5000),
-  dailyPerUserKrw: Number(process.env.AI_DAILY_USER_BUDGET_KRW ?? 1000),
-  /** 한 번의 호출이 이 금액을 넘으면 애초에 보내지 않는다 (프롬프트 폭주 방지) */
-  singleCallMaxKrw: Number(process.env.AI_SINGLE_CALL_MAX_KRW ?? 200),
-};
-
-/**
- * 모델별 단가 (USD per 1M tokens). 2026-07 실측 기준.
- * 환율은 보수적으로 잡는다 — 낮게 잡으면 상한을 넘겨도 안 걸린다.
- */
-export const USD_KRW = Number(process.env.USD_KRW ?? 1400);
-
+/** 모델별 단가 (USD per 1M tokens). 2026-07 실측. */
 export const MODELS = {
-  "gemini-3-flash": { in: 0.50, out: 3.00, label: "Gemini 3 Flash" },
+  "gemini-3-flash":   { in: 0.50, out: 3.00, label: "Gemini 3 Flash" },
   "claude-haiku-4-5": { in: 1.00, out: 5.00, label: "Claude Haiku 4.5" },
-  "gpt-5-mini": { in: 0.25, out: 2.00, label: "GPT-5 mini" },
+  "gpt-5-mini":       { in: 0.25, out: 2.00, label: "GPT-5 mini" },
 };
 
 export const DEFAULT_MODEL = process.env.AI_MODEL ?? "gemini-3-flash";
 
-/** 토큰 수 → 원화. 반올림하지 않고 올림한다 — 과소평가가 상한을 무력화한다. */
+/** 환율은 보수적으로 높게 잡는다 — 낮게 잡으면 상한을 넘겨도 안 걸린다. */
+export const USD_KRW = Number(process.env.USD_KRW ?? 1500);
+
+/** 입력 프롬프트 하드 상한(문자). 이걸 넘으면 자른다. 최대 비용 계산의 전제다. */
+export const MAX_PROMPT_CHARS = 6000;
+
+/** 한국어는 토큰 효율이 낮다. 최대 비용 계산이므로 넉넉히 잡는다. */
+const CHARS_TO_TOKENS = 2.0;
+
+/** 비용은 항상 올림. 내림하면 상한 근처에서 초과가 새어 나간다. */
 export function costKrw(model, inTokens, outTokens) {
   const m = MODELS[model];
   if (!m) throw new Error(`알 수 없는 모델: ${model}`);
@@ -54,63 +45,66 @@ export function costKrw(model, inTokens, outTokens) {
 }
 
 /**
- * 한국어는 토큰 효율이 낮다. 글자 수로 토큰을 어림할 때 1.5배를 곱한다.
- * 사전 견적용이며, 실제 과금은 응답의 usage 값으로 다시 계산한다.
+ * 이 호출이 낼 수 있는 **최대** 비용. 예약액은 이 값이다.
+ * 입력은 잘린 프롬프트 기준, 출력은 API 에 넘길 max_output_tokens 기준이다.
+ * 둘 다 실제 호출에서 초과될 수 없는 값이라야 이 계산이 의미를 갖는다.
  */
-export function estimateTokens(text) {
-  return Math.ceil([...String(text ?? "")].length * 1.5);
+export function maxCostKrw(model, promptChars, maxOutTokens) {
+  const inTok = Math.ceil(Math.min(promptChars, MAX_PROMPT_CHARS) * CHARS_TO_TOKENS);
+  return costKrw(model, inTok, maxOutTokens);
+}
+
+/** 프롬프트를 하드 상한으로 자른다. 자르지 않으면 최대 비용을 보장할 수 없다. */
+export function clampPrompt(text) {
+  const s = String(text ?? "");
+  return [...s].length <= MAX_PROMPT_CHARS ? s : [...s].slice(0, MAX_PROMPT_CHARS).join("");
 }
 
 /**
- * 호출 전 견적. 상한을 넘으면 보내지 않는다.
- * @returns {{ ok: true, estKrw: number } | { ok: false, reason: string, estKrw: number }}
+ * 예약. 한도는 DB 가 정하므로 넘기지 않는다.
+ * @returns {{ allowed: boolean, reservationId?: string, reason?: string, ... }}
  */
-export function preflight({ model, promptText, expectedOutTokens = 4000 }) {
-  const inTok = estimateTokens(promptText);
-  const est = costKrw(model, inTok, expectedOutTokens);
-  if (est > BUDGET.singleCallMaxKrw) {
-    return { ok: false, reason: "single_call_too_expensive", estKrw: est };
-  }
-  return { ok: true, estKrw: est };
-}
-
-/**
- * 오늘 쓴 금액을 DB 에서 확인하고 이번 호출을 허용할지 판단한다.
- * 집계는 RPC 로 한다 — private 스키마를 직접 읽을 수 없고(PostgREST 미노출),
- * 동시 요청에서 읽기·쓰기가 갈라지면 상한이 새기 때문에 한 함수 안에서 처리한다.
- *
- * @param svc service_role 클라이언트
- * @returns {{ allowed: boolean, reason?: string, spentTodayKrw?: number }}
- */
-export async function checkBudget(svc, { userId, estKrw }) {
-  const { data, error } = await svc.rpc("svc_ai_budget_check", {
-    p_member_id: userId,
-    p_est_krw: estKrw,
-    p_daily_total_krw: BUDGET.dailyTotalKrw,
-    p_daily_user_krw: BUDGET.dailyPerUserKrw,
+export async function reserve(svc, { userId, maxKrw }) {
+  const { data, error } = await svc.rpc("svc_ai_reserve", {
+    p_member_id: userId, p_max_krw: maxKrw,
   });
   if (error) {
-    // 예산 확인이 안 되면 **거부한다.** 확인 못 한 채로 돈 쓰는 호출을
-    // 통과시키면 상한 장치가 있으나 마나다 (fail-closed).
-    return { allowed: false, reason: "budget_check_unavailable" };
+    // 예약이 안 되면 호출하지 않는다(fail-closed). 확인 못 한 채 돈 쓰는
+    // 경로를 두면 상한 장치가 있으나 마나다.
+    return { allowed: false, reason: "budget_unavailable" };
   }
   return {
     allowed: data?.allowed === true,
+    reservationId: data?.reservation_id ?? null,
     reason: data?.reason ?? null,
     spentTodayKrw: data?.spent_today ?? null,
+    limitKrw: data?.limit ?? null,
   };
 }
 
-/** 호출이 끝난 뒤 실제 사용량으로 기록한다. 견적이 아니라 실측으로 남긴다. */
-export async function recordUsage(svc, { userId, model, inTokens, outTokens, purpose }) {
-  const krw = costKrw(model, inTokens, outTokens);
-  const { error } = await svc.rpc("svc_ai_record_usage", {
+/** 정산. 실제가 예약을 넘으면 DB 가 거부하고 예약은 open 으로 남는다. */
+export async function settle(svc, { reservationId, userId, model, inTokens, outTokens, purpose }) {
+  const actual = costKrw(model, inTokens, outTokens);
+  const { data, error } = await svc.rpc("svc_ai_settle", {
+    p_reservation_id: reservationId,
     p_member_id: userId,
     p_model: model,
     p_in_tokens: inTokens,
     p_out_tokens: outTokens,
-    p_cost_krw: krw,
+    p_actual_krw: actual,
     p_purpose: purpose,
   });
-  return { recorded: !error, krw };
+  if (error) return { ok: false, reason: "settle_failed", actual };
+  return { ok: data?.ok === true, reason: data?.reason ?? null, actual };
+}
+
+/**
+ * 해제. **호출 실패가 확인된 경우에만** 부른다.
+ * 성공 여부가 불명확하면 부르지 않는다 — 애매하면 돈이 나간 쪽으로 본다.
+ */
+export async function release(svc, { reservationId, userId }) {
+  const { error } = await svc.rpc("svc_ai_release", {
+    p_reservation_id: reservationId, p_member_id: userId,
+  });
+  return !error;
 }

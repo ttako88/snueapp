@@ -10,7 +10,7 @@
 import { NextResponse } from "next/server";
 import { serviceClient, requireUser, NO_STORE } from "../../lib/server/verification/auth.mjs";
 import {
-  DEFAULT_MODEL, MODELS, preflight, checkBudget, recordUsage, BUDGET,
+  DEFAULT_MODEL, MODELS, maxCostKrw, clampPrompt, reserve, settle, release,
 } from "../../lib/server/ai/budget.mjs";
 import { generate, AiKeyMissing, availableProviders } from "../../lib/server/ai/provider.mjs";
 import {
@@ -87,41 +87,53 @@ export async function POST(request) {
   }
 
   const type = PLAN_TYPES.find((t) => t.key === body.planType);
-  const prompt = buildPrompt(body);
+  // 프롬프트를 하드 상한으로 자른다. 자르지 않으면 "최대 비용" 계산이
+  // 성립하지 않고, 그러면 예약액을 실제가 넘어설 수 있다.
+  const prompt = clampPrompt(buildPrompt(body));
+  const maxOut = type.maxOutTokens;
 
-  // --- 견적 ---
-  const est = preflight({
-    model, promptText: SYSTEM + prompt, expectedOutTokens: type.maxOutTokens,
-  });
-  if (!est.ok) return json({ error: est.reason, estKrw: est.estKrw }, 400);
+  // --- 이 호출이 낼 수 있는 최대 비용 ---
+  // 입력은 잘린 프롬프트, 출력은 API 에 넘길 max_output_tokens 기준이라
+  // 실제 비용이 이 값을 넘을 수 없다.
+  const maxKrw = maxCostKrw(model, [...(SYSTEM + prompt)].length, maxOut);
 
-  // --- 예산 확인 + 예약 ---
-  const budget = await checkBudget(svc, { userId: who.userId, estKrw: est.estKrw });
-  if (!budget.allowed) {
+  // --- 예약 (한도는 DB 가 정한다) ---
+  const res = await reserve(svc, { userId: who.userId, maxKrw });
+  if (!res.allowed) {
     return json({
-      error: budget.reason ?? "budget_exceeded",
-      spentTodayKrw: budget.spentTodayKrw ?? null,
-      dailyLimitKrw: BUDGET.dailyTotalKrw,
-    }, 429);
+      error: res.reason ?? "budget_exceeded",
+      spentTodayKrw: res.spentTodayKrw ?? null,
+      dailyLimitKrw: res.limitKrw ?? null,
+    }, res.reason === "single_call_too_expensive" ? 400 : 429);
   }
 
   // --- 생성 ---
   let out;
   try {
-    out = await generate({
-      model, system: SYSTEM, prompt, maxOutTokens: type.maxOutTokens,
-    });
+    out = await generate({ model, system: SYSTEM, prompt, maxOutTokens: maxOut });
   } catch (e) {
+    // 호출이 **실패했음이 확인된** 경우다. 이때만 예약을 푼다.
+    await release(svc, { reservationId: res.reservationId, userId: who.userId });
     if (e instanceof AiKeyMissing) return json({ error: "ai_not_configured", model }, 503);
     return json({ error: "generation_failed" }, 502);
   }
-  if (!out.text?.trim()) return json({ error: "empty_result" }, 502);
+  if (!out.text?.trim()) {
+    // 응답은 왔지만 비어 있다 — 돈은 나갔을 수 있으므로 예약을 풀지 않고
+    // 실제 사용량으로 정산한다.
+    await settle(svc, {
+      reservationId: res.reservationId, userId: who.userId, model,
+      inTokens: out.inTokens, outTokens: out.outTokens,
+      purpose: body.planType === "full" ? "lesson_plan_full" : "lesson_plan_brief",
+    });
+    return json({ error: "empty_result" }, 502);
+  }
 
-  // --- 실제 사용량 기록 ---
+  // --- 정산 ---
   // 실패해도 사용자 응답을 막지 않는다 — 돈은 이미 나갔고, 결과를 안 주면
-  // 돈만 쓰고 아무것도 못 받는 셈이 된다. 대신 기록 실패를 응답에 표시한다.
-  const rec = await recordUsage(svc, {
-    userId: who.userId, model,
+  // 돈만 쓰고 아무것도 못 받는 셈이다. 대신 예약은 open 으로 남아 계속
+  // 비용으로 잡히므로 상한은 지켜진다(보수적 처리).
+  const acct = await settle(svc, {
+    reservationId: res.reservationId, userId: who.userId, model,
     inTokens: out.inTokens, outTokens: out.outTokens,
     purpose: body.planType === "full" ? "lesson_plan_full" : "lesson_plan_brief",
   });
@@ -130,8 +142,8 @@ export async function POST(request) {
     planType: body.planType,
     modelLabel: MODELS[model].label,
     text: out.text,
-    costKrw: rec.krw,
-    accounted: rec.recorded,
+    costKrw: acct.actual,
+    accounted: acct.ok,
     // AI 초안임을 응답에 박아 둔다. 화면이 이걸 빼먹어도 원본에 남는다.
     notice: "AI 가 만든 초안입니다. 반드시 직접 검토·수정해서 쓰세요.",
   }, 200);

@@ -12,10 +12,11 @@ import { useAuth, signOut } from "../lib/identity/useAuth";
 // (기본 메일 템플릿이 6자리 코드 없이 링크만 보내는 구조라 링크 방식 채택.
 //  나중에 커스텀 SMTP를 붙이면 코드 입력 방식으로 바꿀 수 있음.)
 //
-// 학교 이메일 검사는 여기서도 미리 하지만(불필요한 메일 발송 방지용 UX),
-// 진짜 잠금장치는 DB 트리거(enforce_snue_email, supabase/migrations/002_*.sql)다 —
-// 여기 정규식만 믿으면 API를 직접 호출해 우회할 수 있으므로 반드시 서버(DB)에서도 막아야 함.
-const SNUE_EMAIL_RE = /^[^\s@]+@([a-zA-Z0-9-]+\.)*snue\.ac\.kr$/;
+// 가입 정책은 app/lib/authPolicy.js 한 곳에서 정한다. 화면 여기저기에
+// 조건이 흩어져 있으면 DB 는 열었는데 화면이 막는 상태가 생긴다.
+// 진짜 잠금장치는 DB 트리거(private.enforce_snue_email, 010)다 — 여기 검사는
+// 불필요한 메일 발송을 줄이는 UX 이지 보안 경계가 아니다.
+import { canSignUp, signUpBlockedMessage, signUpHint } from "../lib/authPolicy";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -132,23 +133,23 @@ export default function LoginPage() {
     // shouldCreateUser 로 그 둘을 가른다. false 면 계정이 있을 때만 링크가
     // 나가고 없으면 거부된다. 클라이언트에서 계정 존재를 조회하지 않으므로
     // 이메일 존재 여부가 새어나가지도 않는다.
-    const isSnue = SNUE_EMAIL_RE.test(em);
+    const allowed = canSignUp(em);
     setBusy(true);
     setMsg(null);
     const { error } = await supabase.auth.signInWithOtp({
       email: em,
       options: {
         emailRedirectTo: `${window.location.origin}/login`,
-        shouldCreateUser: isSnue,
+        shouldCreateUser: allowed,
       },
     });
     setBusy(false);
     if (error) {
       setMsg({
         type: "error",
-        text: isSnue
+        text: allowed
           ? `메일 발송에 실패했어요 (${error.message})`
-          : "서울교대 이메일(@snue.ac.kr 계열)로만 새로 가입할 수 있어요. 기존 계정이라면 다시 시도해 주세요.",
+          : signUpBlockedMessage(),
       });
       return;
     }
@@ -162,7 +163,7 @@ export default function LoginPage() {
           <>
             <p className="text-sm font-bold text-[#0c4470]">이메일로 간편 로그인</p>
             <p className="mt-1 text-xs text-[#0c4470]/50">
-              비밀번호가 없어요 — 메일로 오는 로그인 링크만 누르면 끝. 처음이면 자동으로 가입돼요.
+              비밀번호가 없어요 — 메일로 오는 로그인 링크만 누르면 끝. {signUpHint()}
             </p>
             <input
               value={email}

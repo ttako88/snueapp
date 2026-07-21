@@ -125,6 +125,21 @@ export default function PracticumPage() {
         )}
       </section>
 
+      {/* ── 실습 게시판 ── */}
+      {/* 학교별로 게시판을 쪼개는 건 DB 구조를 바꿔야 해서 아직이다.
+          지금은 실습 게시판 하나로 보내고, 글에 학교를 적게 안내한다. */}
+      <Link href="/board/practicum"
+        className="flex items-center gap-3 rounded-2xl bg-white p-4 shadow-sm active:bg-[#eaf6fd]">
+        <span className="text-xl">💬</span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-bold text-[#0c4470]">실습 게시판</span>
+          <span className="block text-[11px] text-[#0c4470]/45">
+            {school ? `${school.short} 이야기도 여기에` : "같은 학교 간 사람들과 이야기해요"}
+          </span>
+        </span>
+        <span className="shrink-0 text-[#0c4470]/30">›</span>
+      </Link>
+
       {/* ── 지도안 만들기 ── */}
       <Link href="/practicum/lesson-plan"
         className="flex items-center gap-3 rounded-2xl bg-white p-4 shadow-sm active:bg-[#eaf6fd]">

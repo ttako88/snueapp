@@ -38,7 +38,10 @@ const KEEP = ["get_my_member", "set_initial_nickname", "soft_delete_post", "soft
               "list_verification_requests", "review_verification", "change_nickname", "block_author"];
 
 async function snapshot(q) {
-  return (await q(`select
+  // count(*) 는 bigint 라 node-pg 가 문자열로 준다. 그대로 비교하면
+  // "101" > "93" 이 거짓이 된다(문자열 사전순). 반드시 수로 바꾼다.
+  const toNum = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Number(v)]));
+  return toNum((await q(`select
       (select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace
         where n.nspname in ('public','private','authz') and c.relkind in ('r','p')) tables,
       (select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace
@@ -50,7 +53,7 @@ async function snapshot(q) {
       (select count(*) from public.posts) posts,
       (select count(*) from public.comments) comments,
       (select count(*) from auth.users) users,
-      (select count(*) from private.members) members`))[0];
+      (select count(*) from private.members) members`))[0]);
 }
 
 async function main() {

@@ -27,9 +27,22 @@ import { homedir } from "node:os";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 
-const OUT = join(homedir(), "prod-runs", "TXB_BODY_RC1");
-const MIGRATIONS = ["001_schemas_roles", "002_foundation", "003_functions_triggers",
-                    "004_admin_batch_functions", "005_schedules"];
+// 기본값은 기존 그대로다 — 인자 없이 실행하면 TXB_BODY_RC1 을 만든다.
+// `--set=tail` 은 006~009 용 별도 후보를 만든다. GPT 가 006~009 도
+// OPTION_E 파생 대상에 포함시켰기 때문이다(실행 승인은 별개).
+const SETS = {
+  head: { candidate: "TXB_BODY_RC1",
+          migrations: ["001_schemas_roles", "002_foundation", "003_functions_triggers",
+                       "004_admin_batch_functions", "005_schedules"] },
+  tail: { candidate: "TXB_TAIL_RC1",
+          migrations: ["006_storage_policies", "007_soft_delete_rpc",
+                       "008_harden_private_exec", "009_server_job_rpcs"] },
+};
+const SET_NAME = (process.argv.find((a) => a.startsWith("--set=")) || "--set=head").split("=")[1];
+const SET = SETS[SET_NAME];
+if (!SET) { console.error(`[중단] 알 수 없는 --set=${SET_NAME}. head 또는 tail.`); process.exit(2); }
+const OUT = join(homedir(), "prod-runs", SET.candidate);
+const MIGRATIONS = SET.migrations;
 
 const sha256 = (b) => createHash("sha256").update(b).digest("hex");
 const gitBlob = (buf) => createHash("sha1")
@@ -122,8 +135,14 @@ function topLevelStatements(src) {
     }
     i++;
   }
+  // 마지막 `;` 뒤에 남은 꼬리. 주석·공백뿐이면 문장이 아니다.
+  // trim() 만 보면 파일 끝 주석이 "문장"으로 잡혀 "마지막 문장이 COMMIT"
+  // 검증이 실패한다(008·009 가 그렇다). 실제 키워드가 있을 때만 문장으로 센다.
+  // 001~005 는 commit; 이 파일의 마지막 줄이라 꼬리 자체가 없으므로
+  // 이 수정은 TXB_BODY_RC1 결과를 바꾸지 않는다(실측 확인).
   const tail = src.slice(stmtStart);
-  if (tail.trim()) stmts.push({ start: stmtStart, end: n, raw: tail });
+  if (tail.trim() && keywordStartInRaw(tail) !== -1)
+    stmts.push({ start: stmtStart, end: n, raw: tail });
   return stmts;
 }
 
@@ -183,7 +202,7 @@ console.log("  대상: 001~005 (동결 원본은 수정하지 않는다)\n");
 
 const manifest = {
   derivation: "OPTION_E / PRESEALED_TRANSACTION_NEUTRAL_DERIVATIVE",
-  candidate: "TXB_BODY_RC1",
+  candidate: SET.candidate,
   created_at_utc: new Date().toISOString(),
   rc_base: "e9d1c75",
   note: "운영에서는 변환하지 않는다. 이 manifest 의 derivative_sha256 을 검증한 뒤 봉인된 bytes 를 그대로 실행한다.",

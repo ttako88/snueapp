@@ -168,16 +168,38 @@ export async function effectiveVector(client, inv, roles = [...TARGET_ROLES, ...
   const v = {};
   const one = async (sql, params) => (await client.query(sql, params)).rows[0].x;
 
+  // 예외가 날 수 있는 조회는 반드시 SAVEPOINT 로 감싼다.
+  // PostgreSQL 은 쿼리 하나가 실패하면 트랜잭션 전체가 aborted 되므로
+  // try/catch 만으로는 복구되지 않는다. 이후 모든 문장이 연쇄 실패한다.
+  // (권한명이 버전마다 다른 MAINTAIN 등이 여기에 해당한다)
+  let spN = 0;
+  const safeOne = async (sql, params, fallback = "UNSUPPORTED") => {
+    const sp = `evsp_${++spN}`;
+    await client.query(`savepoint ${sp}`);
+    try {
+      const r = await one(sql, params);
+      await client.query(`release savepoint ${sp}`);
+      return r;
+    } catch {
+      await client.query(`rollback to savepoint ${sp}`);
+      await client.query(`release savepoint ${sp}`);
+      return fallback;
+    }
+  };
+
+  // ⚠ OID 파라미터에는 반드시 ::oid 캐스트를 붙인다.
+  // has_*_privilege 는 (name, text, text) 와 (name, oid, text) 오버로드를 갖는데,
+  // node-pg 가 숫자를 텍스트로 보내면 Postgres 가 **text 오버로드(객체 이름)** 로 해석해
+  // `relation "27382" does not exist` 로 실패한다.
   for (const role of roles) {
     for (const r of inv.relations) {
       for (const p of [...REVOKE_REL_PRIVS, "SELECT"]) {
-        try { v[`rel|${role}|${r.ident}|${p}`] = await one(`select has_table_privilege($1,$2,$3) x`, [role, r.oid, p]); }
-        catch { v[`rel|${role}|${r.ident}|${p}`] = "UNSUPPORTED"; }
+        v[`rel|${role}|${r.ident}|${p}`] = await safeOne(`select has_table_privilege($1,$2::oid,$3) x`, [role, r.oid, p]);
       }
     }
     for (const s of inv.sequences) {
       for (const p of [...REVOKE_SEQ_PRIVS, "SELECT"]) {
-        v[`seq|${role}|${s.ident}|${p}`] = await one(`select has_sequence_privilege($1,$2,$3) x`, [role, s.oid, p]);
+        v[`seq|${role}|${s.ident}|${p}`] = await safeOne(`select has_sequence_privilege($1,$2::oid,$3) x`, [role, s.oid, p]);
       }
     }
     for (const f of inv.routines) {
@@ -188,11 +210,11 @@ export async function effectiveVector(client, inv, roles = [...TARGET_ROLES, ...
         v[`sch|${role}|${s.ident}|${p}`] = await one(`select has_schema_privilege($1,$2,$3) x`, [role, s.ident, p]);
       }
     }
-    // 보완 1: 컬럼 단위 실효 권한
+    // 보완 1: 컬럼 단위 실효 권한 (relid 도 ::oid 캐스트 필수)
     for (const col of inv.columns) {
       for (const p of REVOKE_COL_PRIVS) {
         v[`col|${role}|${col.ident}|${p}`] =
-          await one(`select has_column_privilege($1,$2,$3,$4) x`, [role, col.relid, col.attname, p]);
+          await safeOne(`select has_column_privilege($1,$2::oid,$3,$4) x`, [role, col.relid, col.attname, p]);
       }
     }
     // 보완 6: database CREATE

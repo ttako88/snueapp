@@ -213,10 +213,17 @@ async function main() {
     line("REVOKE / rollback GRANT", `${fenceStmts.length} / ${rollbackStmts.length}`);
 
     // ACL_MATERIALIZATION_LEDGER — 32개 전부 분류
+    // kind 는 inventory 버킷으로 판정한다. relkind 는 시퀀스에서 비어 있을 수 있어
+    // 그대로 쓰면 시퀀스가 schema 로 오분류된다.
+    const kindOf = new Map();
+    for (const o of preFenceInv.relations) kindOf.set(o.ident, "relation");
+    for (const o of preFenceInv.sequences) kindOf.set(o.ident, "sequence");
+    for (const o of preFenceInv.routines) kindOf.set(o.ident, "routine");
+    for (const o of preFenceInv.schemas) kindOf.set(o.ident, "schema");
     const matSet = new Set(materialized.map((m) => m.ident));
     ledger = nullObjs.map((o) => ({
       ident: o.ident,
-      kind: o.relkind ? "relation/sequence" : o.prokind ? "routine" : "schema",
+      kind: kindOf.get(o.ident) ?? "unknown",
       classification: matSet.has(o.ident) ? "MATERIALIZED_REQUIRED" : "NOT_MATERIALIZED_NO_REMOVAL_TARGET",
     }));
     const unexpected = ledger.filter((l) => l.classification === "MATERIALIZED_UNEXPECTED").length;

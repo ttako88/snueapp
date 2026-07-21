@@ -164,6 +164,22 @@ export async function expandedAclVector(client, inv) {
 }
 
 // ── EFFECTIVE_PRIVILEGE_VECTOR ───────────────────────────────
+// ── probe 텔레메트리 ─────────────────────────────────────────
+// SAVEPOINT 로 오류를 격리하면 "조용히 누락"될 수 있다. 그래서 시도·완료·
+// 누락·오류를 전수 계수하고, 분류되지 않은 오류가 하나라도 있으면 PASS 로
+// 보지 않는다. (GPT 요구: unclassified_probe_error_count = 0)
+export const probeStats = {
+  attempted: 0, completed: 0, skipped: 0, errors: 0, unclassified: 0,
+  byKind: {}, errorList: [],
+};
+export function resetProbeStats() {
+  probeStats.attempted = 0; probeStats.completed = 0; probeStats.skipped = 0;
+  probeStats.errors = 0; probeStats.unclassified = 0;
+  probeStats.byKind = {}; probeStats.errorList = [];
+}
+// 허용되는 오류: 해당 PG 버전이 모르는 권한명 등 (사전에 분류된 것만)
+const CLASSIFIED_ERR = /unrecognized privilege type|does not exist: privilege/i;
+
 export async function effectiveVector(client, inv, roles = [...TARGET_ROLES, ...PRESERVE_ROLES]) {
   const v = {};
   const one = async (sql, params) => (await client.query(sql, params)).rows[0].x;
@@ -173,17 +189,30 @@ export async function effectiveVector(client, inv, roles = [...TARGET_ROLES, ...
   // try/catch 만으로는 복구되지 않는다. 이후 모든 문장이 연쇄 실패한다.
   // (권한명이 버전마다 다른 MAINTAIN 등이 여기에 해당한다)
   let spN = 0;
-  const safeOne = async (sql, params, fallback = "UNSUPPORTED") => {
+  const safeOne = async (sql, params, kind = "?", label = "") => {
+    probeStats.attempted++;
+    probeStats.byKind[kind] = (probeStats.byKind[kind] || 0) + 1;
+    // SAVEPOINT 는 트랜잭션 안에서만 유효하다. 트랜잭션 밖(자동커밋)에서는
+    // 실패한 쿼리가 이후 문장을 오염시키지 않으므로 savepoint 없이 실행한다.
     const sp = `evsp_${++spN}`;
-    await client.query(`savepoint ${sp}`);
+    let inTx = true;
+    try { await client.query(`savepoint ${sp}`); }
+    catch (e) { if (e.code === "25P01" || /transaction block/i.test(e.message || "")) inTx = false; else throw e; }
     try {
       const r = await one(sql, params);
-      await client.query(`release savepoint ${sp}`);
+      if (inTx) await client.query(`release savepoint ${sp}`);
+      probeStats.completed++;
       return r;
-    } catch {
-      await client.query(`rollback to savepoint ${sp}`);
-      await client.query(`release savepoint ${sp}`);
-      return fallback;
+    } catch (e) {
+      if (inTx) {
+        await client.query(`rollback to savepoint ${sp}`);
+        await client.query(`release savepoint ${sp}`);
+      }
+      probeStats.errors++; probeStats.skipped++;
+      const classified = CLASSIFIED_ERR.test(e.message || "");
+      if (!classified) probeStats.unclassified++;
+      probeStats.errorList.push({ kind, label, code: e.code, message: (e.message || "").slice(0, 160), classified });
+      return "UNSUPPORTED";
     }
   };
 
@@ -194,31 +223,32 @@ export async function effectiveVector(client, inv, roles = [...TARGET_ROLES, ...
   for (const role of roles) {
     for (const r of inv.relations) {
       for (const p of [...REVOKE_REL_PRIVS, "SELECT"]) {
-        v[`rel|${role}|${r.ident}|${p}`] = await safeOne(`select has_table_privilege($1,$2::oid,$3) x`, [role, r.oid, p]);
+        v[`rel|${role}|${r.ident}|${p}`] = await safeOne(`select has_table_privilege($1,$2::oid,$3) x`, [role, r.oid, p], "relation", `${r.ident}|${p}`);
       }
     }
     for (const s of inv.sequences) {
       for (const p of [...REVOKE_SEQ_PRIVS, "SELECT"]) {
-        v[`seq|${role}|${s.ident}|${p}`] = await safeOne(`select has_sequence_privilege($1,$2::oid,$3) x`, [role, s.oid, p]);
+        v[`seq|${role}|${s.ident}|${p}`] = await safeOne(`select has_sequence_privilege($1,$2::oid,$3) x`, [role, s.oid, p], "sequence", `${s.ident}|${p}`);
       }
     }
     for (const f of inv.routines) {
-      v[`fn|${role}|${f.ident}|EXECUTE`] = await one(`select has_function_privilege($1,$2::oid,'EXECUTE') x`, [role, f.oid]);
+      v[`fn|${role}|${f.ident}|EXECUTE`] = await safeOne(
+        `select has_function_privilege($1,$2::oid,'EXECUTE') x`, [role, f.oid], "routine", f.ident);
     }
     for (const s of inv.schemas) {
       for (const p of ["CREATE", "USAGE"]) {
-        v[`sch|${role}|${s.ident}|${p}`] = await one(`select has_schema_privilege($1,$2,$3) x`, [role, s.ident, p]);
+        v[`sch|${role}|${s.ident}|${p}`] = await safeOne(`select has_schema_privilege($1,$2,$3) x`, [role, s.ident, p], "schema", `${s.ident}|${p}`);
       }
     }
     // 보완 1: 컬럼 단위 실효 권한 (relid 도 ::oid 캐스트 필수)
     for (const col of inv.columns) {
       for (const p of REVOKE_COL_PRIVS) {
         v[`col|${role}|${col.ident}|${p}`] =
-          await safeOne(`select has_column_privilege($1,$2::oid,$3,$4) x`, [role, col.relid, col.attname, p]);
+          await safeOne(`select has_column_privilege($1,$2::oid,$3,$4) x`, [role, col.relid, col.attname, p], "column", `${col.ident}|${p}`);
       }
     }
     // 보완 6: database CREATE
-    v[`db|${role}|CREATE`] = await one(`select has_database_privilege($1, current_database(), 'CREATE') x`, [role]);
+    v[`db|${role}|CREATE`] = await safeOne(`select has_database_privilege($1, current_database(), 'CREATE') x`, [role], "database", "CREATE");
   }
   return v;
 }

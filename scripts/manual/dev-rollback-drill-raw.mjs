@@ -157,10 +157,52 @@ async function main() {
     line("드릴 종료", "ROLLBACK");
   }
 
-  head("4. 드릴 후 dev 상태 재확인");
+  head("4. 드릴 후 dev 상태 재확인 (GPT §3)");
   const afterRaw = await L.rawAclSnapshot(c, names);
-  rec("dev 는 fenced committed 상태 유지",
+  const afterInv = await L.inventory(c, names);
+  const afterExpanded = await L.expandedAclVector(c, afterInv);
+  L.resetProbeStats();
+  const afterEff = await L.effectiveVector(c, afterInv);
+  const psAfter = { ...L.probeStats };
+  rec("raw fenced-state hash exact",
     sha256(afterRaw.join("\n")) === sha256(fencedRaw.join("\n")));
+  rec("canonical expanded hash exact",
+    sha256(afterExpanded.join("\n")) === sha256(fencedExpanded.join("\n")));
+  const mutation = Object.entries(afterEff).filter(([k, v]) => {
+    if (v !== true) return false;
+    const [kind, role, , priv] = k.split("|");
+    if (!["anon", "authenticated"].includes(role)) return false;
+    return !(priv === "SELECT" || (kind === "sch" && priv === "USAGE"));
+  });
+  rec("드릴 후 mutation privilege 0", mutation.length === 0, String(mutation.length));
+  rec("probe unclassified 0", psAfter.unclassified === 0, String(psAfter.unclassified));
+  const effHash = sha256(Object.keys(afterEff).sort().map((k) => `${k}=${afterEff[k]}`).join("\n"));
+  line("effective privilege hash", effHash.slice(0, 24) + "…");
+
+  head("5. FORMAL 판정의 증거 한계 (과대보고하지 않는다)");
+  // GPT §3 은 "pre-fence raw ACL 과 rollback 적용 후 raw ACL 대조"를 요구한다.
+  // 그러나 PASS_B 는 pre-fence RAW 스냅샷을 봉인하지 않았다. 커밋이 끝난
+  // 지금은 복원 불가능하며, 재현하려면 dev reset 이 필요한데 GPT 는 이를
+  // 명시적으로 불허했다. 따라서 다음과 같이 구분해 보고한다.
+  const limitations = [
+    { item: "RAW_PREFENCE_SNAPSHOT_SEALED", value: "NO",
+      note: "PASS_B 가 pre-fence raw 를 봉인하지 않았다. 사후 복원 불가." },
+    { item: "RAW_EXACT_MATCH_VS_MEASURED_PREFENCE", value: "NOT_POSSIBLE",
+      note: "봉인본이 없어 직접 대조가 성립하지 않는다. 추정으로 대체하지 않는다." },
+    { item: "CANONICAL_EXPANDED_EXACT_VS_LIVE_PREFENCE", value: "PROVEN_IN_PASS_B",
+      note: "PASS_B 드릴은 트랜잭션 안에서 실제 pre-fence 벡터와 대조했고 -0/+0 이었다. "
+          + "이 벡터는 object·grantor·grantee·privilege·is_grantable 을 모두 포함하므로 "
+          + "grantor/grantee/privilege/is_grantable/object identity exact 는 충족된다." },
+    { item: "NULLNESS_LEDGERED", value: "YES_32",
+      note: "raw 가 더 갖는 정보 중 NULL 여부는 레저로 별도 실측됐다." },
+    { item: "RAW_ORDER_ONLY_DIFFERENCE", value: "UNMEASURED",
+      note: "aclitem 배열 순서는 pre-fence 시점에 측정된 바 없다. 0 이라고 주장하지 않는다." },
+  ];
+  for (const l of limitations) line(l.item, l.value);
+  const unresolvedItems = limitations.filter((l) => /NOT_POSSIBLE|UNMEASURED|^NO$/.test(l.value)).length;
+  line("명시적 unresolved item 수", unresolvedItems);
+  console.log("  · 운영 러너에는 fence 적용 직전 raw 스냅샷 봉인을 추가한다.");
+  console.log("    (같은 한계가 운영에서 반복되지 않도록)");
 
   const out = {
     drill: "LAYER_B_ACL_ROLLBACK_DRILL_RAW",
@@ -170,6 +212,9 @@ async function main() {
     classification_tally: ledger.reduce((a, r) => (a[r.classification] = (a[r.classification] || 0) + 1, a), {}),
     unexplained_raw_diff_count: ledger.filter((r) => r.classification === "UNEXPLAINED_RAW_DIFF").length,
     fenced_raw_sha256: sha256(fencedRaw.join("\n")),
+    formal_evidence_limitations: limitations,
+    explicit_unresolved_item_count: unresolvedItems,
+    post_drill: { mutation_privilege: mutation.length, effective_privilege_hash: effHash },
     drill_raw_sha256: sha256(drillRaw.join("\n")),
     tuple_ledger: ledger,
   };
@@ -179,6 +224,8 @@ async function main() {
   console.log(`\nROLLBACK_DRILL_RAW=${fails.length ? "FAIL" : "PASS"}`);
   console.log(`UNEXPLAINED_RAW_DIFF=${out.unexplained_raw_diff_count}`);
   console.log(`TUPLE_LEDGER_ROWS=${out.tuple_ledger_rows}`);
+  console.log(`LAYER_B_FORMAL=PARTIAL — RAW_PREFENCE_SNAPSHOT_SEALED=NO`);
+  console.log(`EXPLICIT_UNRESOLVED_ITEMS=${unresolvedItems}`);
   console.log(`RECEIPT=${join(RUN, "ACL_ROLLBACK_DRILL_RAW.json")}`);
   if (fails.length) for (const f of fails) console.log(`  · ${f}`);
   return fails.length ? 3 : 0;

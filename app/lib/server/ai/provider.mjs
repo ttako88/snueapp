@@ -2,13 +2,16 @@
 // provider.mjs — AI 공급자 추상화 (서버 전용)
 // ============================================================
 // 왜 추상화하나
-//   가격 조사 결과 세안 1건 원가가 Gemini 3 Flash ₩20 / Claude Haiku ₩35 /
-//   GPT-5 mini ₩13 로, **최저가와 최고가 차이가 ₩70 이 안 된다.**
-//   즉 가격이 선택 기준이 못 되고, 실제 기준은 한국어·교육과정 용어 정확도다.
-//   그건 써 봐야 아는 것이라 갈아끼울 수 있게 만들어 둔다.
+//   가격 차이가 작아서(약안 1건 실측 ₩5 수준) 가격이 선택 기준이 못 된다.
+//   실제 기준은 한국어·교육과정 용어 정확도인데 그건 써 봐야 안다.
+//   그래서 갈아끼울 수 있게 만들어 둔다.
 //
-//   중국계 API(DeepSeek ₩2.5 등)는 절감액이 회당 ₩10~30 뿐인데 입력 데이터가
-//   국외로 나가고 교육과정 용어 정확도가 미검증이라 기본 후보에서 뺐다.
+//   중국계 API 는 절감액이 회당 ₩10 안팎인데 입력이 국외로 나가고
+//   교육과정 용어 정확도가 미검증이라 기본 후보에서 뺐다.
+//
+// ⚠️ 모델명은 추측하지 말고 실제로 호출해 확인한다. /v1beta/models 목록에
+//    있어도 "신규 사용자에게는 제공 안 됨" 으로 404 가 나는 모델이 있다.
+//    실측(2026-07-22) 결과 이 계정에서는 `-latest` 별칭만 호출된다.
 //
 // 키가 없으면 명확히 그렇게 말한다. 조용히 빈 결과를 주지 않는다.
 // ============================================================
@@ -20,8 +23,11 @@ if (typeof window !== "undefined") {
 
 /** 어떤 공급자를 쓸 수 있는지 — 키 존재 여부만 본다. 값은 읽지 않는다. */
 export function availableProviders(env = process.env) {
+  const gemini = Boolean(env.GEMINI_API_KEY);
   return {
-    "gemini-3-flash": Boolean(env.GEMINI_API_KEY),
+    "gemini-flash-latest": gemini,
+    "gemini-flash-lite-latest": gemini,
+    "gemini-pro-latest": gemini,
     "claude-haiku-4-5": Boolean(env.ANTHROPIC_API_KEY),
     "gpt-5-mini": Boolean(env.OPENAI_API_KEY),
   };
@@ -42,26 +48,38 @@ export class AiKeyMissing extends Error {
 export async function generate({ model, system, prompt, maxOutTokens = 4000 }, env = process.env) {
   if (!MODELS[model]) throw new Error(`알 수 없는 모델: ${model}`);
 
-  if (model === "gemini-3-flash") {
+  if (model.startsWith("gemini-")) {
     const key = env.GEMINI_API_KEY;
     if (!key) throw new AiKeyMissing(model);
+    // 키를 URL 쿼리가 아니라 헤더로 보낸다 — 쿼리에 넣으면 접근 로그·프록시·
+    // 리퍼러에 키가 남는다. 구글은 두 방식을 다 받는다.
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent?key=${key}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: system }] },
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: { maxOutputTokens: maxOutTokens, temperature: 0.4 },
         }),
       });
-    if (!res.ok) throw new Error(`gemini ${res.status}`);
+    if (!res.ok) {
+      // 상태코드만으로는 원인을 못 찾는다(404 가 모델명 오타인지 권한인지).
+      // 응답 본문의 message 만 붙인다 — 키는 본문에 없다.
+      const t = await res.text().catch(() => "");
+      let msg = "";
+      try { msg = JSON.parse(t)?.error?.message ?? ""; } catch { msg = t.slice(0, 120); }
+      throw new Error(`gemini ${res.status}${msg ? `: ${msg}` : ""}`);
+    }
     const j = await res.json();
     return {
       text: j?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") ?? "",
       inTokens: j?.usageMetadata?.promptTokenCount ?? 0,
       outTokens: j?.usageMetadata?.candidatesTokenCount ?? 0,
+      // 별칭이 실제로 어떤 모델을 가리켰는지 기록한다. 별칭이 옮겨가면
+      // 단가·품질이 조용히 바뀌므로 이 값이 달라지는 것을 신호로 삼는다.
+      resolvedModel: j?.modelVersion ?? null,
     };
   }
 

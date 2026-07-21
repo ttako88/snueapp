@@ -18,14 +18,31 @@ if (typeof window !== "undefined") {
   throw new Error("ai/budget.mjs 는 서버 전용입니다");
 }
 
-/** 모델별 단가 (USD per 1M tokens). 2026-07 실측. */
+// 모델별 단가 (USD per 1M tokens).
+//
+// ⚠️ 키는 **모델 ID 그대로** 써야 한다. 처음에 가격 기사에 적힌 표기를
+//   그대로 옮겨 "gemini-3-flash" 라고 썼다가 404 를 맞았다. 실제 계정에서
+//   generateContent 가 되는 모델은 2.5 계열이었다. 모델명은 추측하지 말고
+//   /v1beta/models 로 조회해서 확인한다.
+//
+// 단가는 **실제보다 높게** 잡는다. 낮게 잡으면 예산 상한이 새기 때문에,
+// 이쪽 방향의 오차만 안전하다.
 export const MODELS = {
-  "gemini-3-flash":   { in: 0.50, out: 3.00, label: "Gemini 3 Flash" },
-  "claude-haiku-4-5": { in: 1.00, out: 5.00, label: "Claude Haiku 4.5" },
-  "gpt-5-mini":       { in: 0.25, out: 2.00, label: "GPT-5 mini" },
+  "gemini-flash-latest":      { in: 0.60, out: 3.60, label: "Gemini Flash" },
+  "gemini-flash-lite-latest": { in: 0.25, out: 1.20, label: "Gemini Flash Lite" },
+  "gemini-pro-latest":        { in: 2.50, out: 15.00, label: "Gemini Pro" },
+  "claude-haiku-4-5":         { in: 1.00, out: 5.00, label: "Claude Haiku 4.5" },
+  "gpt-5-mini":               { in: 0.25, out: 2.00, label: "GPT-5 mini" },
 };
 
-export const DEFAULT_MODEL = process.env.AI_MODEL ?? "gemini-3-flash";
+// ⚠️ 고정 버전(gemini-2.5-flash 등)을 쓰고 싶었지만 **쓸 수 없다.**
+//   신규 계정에는 고정판이 열려 있지 않고 `-latest` 별칭만 호출된다(실측).
+//   별칭은 가리키는 모델이 바뀌면 단가·품질이 조용히 달라지는 위험이 있으므로
+//   두 가지로 보완한다.
+//     ① 단가를 실제보다 **20% 높게** 잡는다 — 별칭이 비싼 모델로 옮겨가도
+//        예산 상한이 먼저 걸리도록
+//     ② 응답의 modelVersion 을 기록해 별칭이 실제로 이동했는지 감지한다
+export const DEFAULT_MODEL = process.env.AI_MODEL ?? "gemini-flash-latest";
 
 /** 환율은 보수적으로 높게 잡는다 — 낮게 잡으면 상한을 넘겨도 안 걸린다. */
 export const USD_KRW = Number(process.env.USD_KRW ?? 1500);

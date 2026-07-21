@@ -63,7 +63,7 @@ export const FEATURES = {
     requires: "Gate 4a 운영배포 완료",
   },
   bugReport: {
-    enabled: false,
+    enabled: true,
     label: "버그제보",
     summary: "설정에서 버그 제보 + 내 제보 처리상태 확인",
     needsDb: true,

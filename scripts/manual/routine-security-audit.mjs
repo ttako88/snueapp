@@ -67,22 +67,45 @@ const keyOf = (schema, name) => `${schema}.${name}`;
 for (const r of routines) if (!exec.has(keyOf(r.schema, r.name))) exec.set(keyOf(r.schema, r.name), new Set(["PUBLIC"]));
 
 const applyAcl = (verb, target, roles) => {
-  const t = target.toLowerCase().replace(/^function\s+/, "").replace(/\s*\(.*\)$/, "").trim();
-  for (const [k, set] of exec) {
-    const matchExact = k.toLowerCase() === t;
+  const raw = target.toLowerCase().replace(/^function\s+/, "").trim();
+  // 한 문장에 함수를 여러 개 나열할 수 있다 —
+  //   grant execute on function a(), b(int), c(text) to authenticated;
+  // 이를 통째로 하나의 이름으로 보면 어느 것과도 매칭되지 않아 그 문장이
+  // 통째로 무시된다. 실제로 003 의 authz 헬퍼 5개 일괄 처리가 그렇게
+  // 누락돼 "PUBLIC EXECUTE 5" 라는 잘못된 결론이 나왔다. 쉼표로 나눈다.
+  // 단 인자 목록 안의 쉼표는 나누면 안 되므로 괄호 깊이를 센다.
+  const parts = [];
+  let depth = 0, cur = "";
+  for (const ch of raw) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { parts.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  if (cur.trim()) parts.push(cur);
+
+  for (const part of parts) {
+    const t = part.replace(/\s*\(.*\)\s*$/, "").trim();
+    if (!t) continue;
     const matchAll = /^all\s+functions\s+in\s+schema\s+([a-z_]+)/.exec(t);
-    const matchSchema = matchAll && k.toLowerCase().startsWith(matchAll[1] + ".");
-    if (!matchExact && !matchSchema) continue;
-    for (const role of roles) {
-      if (verb === "revoke") set.delete(role);
-      else set.add(role);
+    for (const [k, set] of exec) {
+      const matchExact = k.toLowerCase() === t;
+      const matchSchema = matchAll && k.toLowerCase().startsWith(matchAll[1] + ".");
+      if (!matchExact && !matchSchema) continue;
+      for (const role of roles) {
+        if (verb === "revoke") set.delete(role);
+        else set.add(role);
+      }
     }
   }
 };
 for (const f of files) {
   const sql = readFileSync(join(MIGDIR, f), "utf8");
   for (const m of sql.matchAll(
-    /\b(revoke|grant)\s+execute\s+on\s+function\s+([\s\S]{1,160}?)\s+(?:from|to)\s+([a-z_,\s]+?)\s*;/gi)) {
+    // 길이 상한을 160 으로 두면 함수를 여러 개 나열한 문장이 잘려 매칭에
+    // 실패하고 그 문장이 통째로 무시된다. 003 의 authz 헬퍼 5개 일괄
+    // 처리(약 200자)가 그렇게 누락됐다. 넉넉히 잡는다.
+    /\b(revoke|grant)\s+execute\s+on\s+function\s+([\s\S]{1,600}?)\s+(?:from|to)\s+([a-z_,\s]+?)\s*;/gi)) {
     const roles = m[3].split(",").map((s) => s.trim().toLowerCase())
       .map((s) => s === "public" ? "PUBLIC" : s);
     applyAcl(m[1].toLowerCase(), m[2], roles);

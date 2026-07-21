@@ -7,7 +7,19 @@
 // 시그니처는 운영 카탈로그 확인값이다.
 
 import { supabase } from "../supabase/client";
+import { authedPost } from "./apiFetch";
 import { asBigintParam, invalidIdResult } from "./ids";
+
+/**
+ * 심사용 서류 열람 URL. 서버가 권한을 다시 확인하고 60초짜리 signed URL 을
+ * 발급한다. 경로는 서버가 DB 에서 찾는다 — 여기서 경로를 보낼 수 없다.
+ * 열람 사실은 서버가 audit_logs 에 남긴다.
+ */
+export async function requestDocumentUrl(requestId) {
+  const id = asBigintParam(requestId);
+  if (id === null) return { error: { code: "bad_request" } };
+  return authedPost("/api/verification/document", { requestId: id });
+}
 
 /** 반려 사유 — DB check 제약과 같은 목록이어야 한다 */
 export const REJECT_REASONS = [
@@ -32,6 +44,20 @@ export const VERIFICATION_STATUS_LABEL = {
   submitted: "심사 대기",
   verified: "인증 완료",
   rejected: "반려됨",
+};
+
+/**
+ * 신청 1건의 상태. 위 VERIFICATION_STATUS_LABEL 은 "회원" 의 상태라 값이 다르다
+ * — 섞어 쓰면 화면에 빈칸이 뜬다. DB check 제약(002)과 같은 7종.
+ */
+export const REQUEST_STATUS_LABEL = {
+  uploading: "업로드 대기",
+  submitted: "심사 대기",
+  approved: "승인됨",
+  rejected: "반려됨",
+  withdrawn: "철회함",
+  upload_expired: "기한 만료",
+  expired_unreviewed: "미심사 만료",
 };
 
 /** 내 신청 이력 (일반 사용자) */

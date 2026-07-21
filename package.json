@@ -7,7 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test \"tests/*.test.mjs\""
+    "test": "node --test \"tests/*.test.mjs\"",
+    "verify:setup": "node scripts/manual/setup-verify-secret.mjs",
+    "verify:ready": "node scripts/manual/diag-verification-ready.mjs",
+    "verify:e2e": "node scripts/manual/verify-e2e-smoke.mjs",
+    "setup": "node scripts/manual/setup-wizard.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.7",

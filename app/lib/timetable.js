@@ -14,6 +14,11 @@ export const SEMESTERS = [
   "2022-1", "2022-2", "2023-1", "2023-2", "2024-1", "2024-2",
   "2025-1", "2025-2", "2026-1", "2026-2",
 ];
+
+// 화면에 고를 때는 최신 학기가 앞에 와야 한다 — 대부분 이번 학기를 본다.
+// 다만 위 배열 자체를 뒤집으면 안 된다. collectTakenBefore 가 indexOf 로
+// "기준 학기 이전" 을 판정하므로 시간순이 전제다. 표시용만 따로 둔다.
+export const SEMESTERS_NEWEST_FIRST = [...SEMESTERS].reverse();
 export const SEMESTER_LABELS = {
   "2022-1": "2022년 1학기",
   "2022-2": "2022년 2학기",

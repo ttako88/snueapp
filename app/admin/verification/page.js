@@ -6,7 +6,7 @@ import { supabase } from "../../lib/supabase/client";
 import { useAuth } from "../../lib/identity/useAuth";
 import {
   DOC_TYPE_LABEL, REJECT_REASONS,
-  listVerificationRequests, reviewVerification,
+  listVerificationRequests, reviewVerification, requestDocumentUrl,
 } from "../../lib/community/verification";
 
 // 이 화면은 UX 게이트일 뿐이다. 실제 권한 경계는 DB 다 —
@@ -27,6 +27,8 @@ export default function VerificationConsolePage() {
   const [error, setError] = useState(null);
   const [busyId, setBusyId] = useState(null);
   const [rejecting, setRejecting] = useState(null); // { id, code }
+  const [docUrl, setDocUrl] = useState(null);       // { id, url, pdf }
+  const [docBusyId, setDocBusyId] = useState(null);
   const [notice, setNotice] = useState(null);
 
   const role = profile?.role ?? null;
@@ -56,6 +58,30 @@ export default function VerificationConsolePage() {
     }
     load();
   }, [session, authLoading, profileLoading, canReview, load]);
+
+  async function openDoc(id) {
+    setDocBusyId(id);
+    setNotice(null);
+    const { data, error: err } = await requestDocumentUrl(id);
+    setDocBusyId(null);
+    if (err || !data?.url) {
+      // audit_unavailable 은 서버가 일부러 막은 것이다 — 접근 기록을 남기지
+      // 못하면 열람을 허용하지 않는다. 심사자가 "왜 안 열리지" 하고 헤매지
+      // 않도록 차단 사유를 그대로 말해 준다.
+      setNotice({
+        type: "error",
+        text: err?.code === "purged" ? "이 서류는 이미 파기됐어요."
+          : err?.code === "audit_unavailable"
+            ? "보안 접근 기록을 남길 수 없어 서류 열람을 차단했어요. 잠시 후 다시 시도해 주세요."
+            : "서류를 열지 못했어요.",
+      });
+      return;
+    }
+    // 형식을 화면에서 추측하지 않는다. 경로에는 확장자가 없고(서버가 일부러
+    // 빼놨다) URL 로도 알 수 없다. finalize 가 magic bytes 판정 결과로
+    // Content-Type 을 바로잡아 두므로, <object> 가 헤더를 보고 알아서 그린다.
+    setDocUrl({ id, url: data.url });
+  }
 
   async function handle(id, approve, rejectCode) {
     setBusyId(id);
@@ -138,12 +164,34 @@ export default function VerificationConsolePage() {
               </span>
             </div>
 
-            {/* 서류 이미지 열람은 서버가 60초 signed URL 을 발급해야 한다.
-                그 라우트가 아직 없으므로 여기서는 안내만 하고 열지 않는다.
-                없는 기능을 있는 것처럼 보이게 하면 심사자가 오판한다. */}
-            <p className="mt-3 rounded-xl bg-[#f8f9fb] px-3 py-2 text-[11px] text-[#0c4470]/50">
-              서류 이미지 열람은 아직 준비 중이에요. 지금은 이름·서류종류만 보고 판단해야 해요.
-            </p>
+            {/* 서류 열람 — 서버가 60초 signed URL 을 발급한다. URL 을 상태에
+                담아두지 않는 이유: 60초면 만료되므로 남겨두면 "눌렀는데 안 열리는"
+                버튼이 된다. 누를 때마다 새로 받는다. */}
+            {docUrl?.id === r.id ? (
+              <div className="mt-3 overflow-hidden rounded-xl border border-black/5">
+                <object data={docUrl.url} className="h-96 w-full bg-[#f8f9fb]">
+                  {/* 브라우저가 내장 뷰어로 못 그릴 때만 이 링크가 보인다 */}
+                  <a href={docUrl.url} target="_blank" rel="noreferrer"
+                     className="block px-3 py-6 text-center text-xs font-bold text-[#0095da]">
+                    새 창에서 열기
+                  </a>
+                </object>
+                <button
+                  onClick={() => setDocUrl(null)}
+                  className="w-full bg-[#f8f9fb] py-2 text-[11px] font-bold text-[#0c4470]/50"
+                >
+                  닫기 (링크는 60초 뒤 만료돼요)
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => openDoc(r.id)}
+                disabled={docBusyId === r.id}
+                className="mt-3 w-full rounded-xl bg-[#f2f6fa] py-2.5 text-xs font-bold text-[#0c4470]/70 disabled:opacity-40"
+              >
+                {docBusyId === r.id ? "여는 중…" : "제출 서류 보기"}
+              </button>
+            )}
 
             {rejecting?.id === r.id ? (
               <div className="mt-3">

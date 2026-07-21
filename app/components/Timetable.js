@@ -6,7 +6,7 @@ import {
   DAYS,
   DEPARTMENTS,
   PERIOD_TIMES,
-  SEMESTERS,
+  SEMESTERS_NEWEST_FIRST,
   SEMESTER_LABELS,
   DEFAULT_SEMESTER,
   loadTimetableSetup,
@@ -284,7 +284,7 @@ export default function Timetable({ editable = true }) {
       {/* 학기 전환 칩 — 이전 학기 시간표도 기록·조회 (마법사의 기수강 제외에 사용됨) */}
       {editable && (
         <div className="-mx-1 mb-2 flex gap-1.5 overflow-x-auto px-1 pb-0.5">
-          {SEMESTERS.map((s) => (
+          {SEMESTERS_NEWEST_FIRST.map((s) => (
             <button
               key={s}
               onClick={() => switchSem(s)}
@@ -664,7 +664,7 @@ export function SetupSheet({ formGrade, setFormGrade, formDept, setFormDept, for
 
         <p className="mb-1.5 text-xs font-bold text-[#0c4470]/50">학기</p>
         <div className="mb-3 grid grid-cols-2 gap-2">
-          {SEMESTERS.map((s) => (
+          {SEMESTERS_NEWEST_FIRST.map((s) => (
             <button
               key={s}
               onClick={() => setFormSemester(s)}

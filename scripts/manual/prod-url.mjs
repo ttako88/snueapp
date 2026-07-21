@@ -39,6 +39,59 @@ export function readProdEnv(keys) {
   return out;
 }
 
+// ============================================================
+// 접속 헬퍼 — 기본이 읽기 전용이다
+// ============================================================
+// 왜 필요한가 (COLLAB_PROTOCOL §3-1):
+//   PROD_DB_URL 은 postgres 역할로 접속한다. 즉 모든 스크립트가 쓰기 능력을
+//   갖고 있고, 지금까지는 각 스크립트가 `begin read only` 를 **직접 적어야만**
+//   막혔다. 실측해 보니 prod-url 을 쓰는 40개 중 24개에 그 문장이 없었고,
+//   그중에는 읽기만 하는 diag 도구도 섞여 있었다.
+//   "실행자가 기억해야 지켜지는 규칙은 지켜지지 않는다" 의 교과서적 사례다.
+//
+//   그래서 기본값을 뒤집는다. connectProd() 는 세션 자체를 읽기 전용으로
+//   고정하므로, 스크립트가 실수로 UPDATE 를 보내면 **DB 가 거부한다**.
+//   쓰기가 필요하면 의도를 밝혀 명시적으로 열어야 한다.
+import pg from "pg";
+
+/**
+ * @param {object} opts
+ * @param {boolean} [opts.write=false] 쓰기를 하려면 true. 이유를 함께 적어야 한다.
+ * @param {string}  [opts.reason]      write:true 일 때 필수 — 무엇을 왜 바꾸는가.
+ * @returns {Promise<pg.Client>}
+ */
+export async function connectProd(url, opts = {}) {
+  assertProdUrl(url, "PROD_DB_URL");
+  const write = opts.write === true;
+  if (write && !opts.reason) {
+    throw new Error("쓰기 접속에는 reason 이 필요합니다 (무엇을 왜 바꾸는가)");
+  }
+
+  const client = new pg.Client({
+    connectionString: url,
+    ssl: { rejectUnauthorized: false },
+  });
+  await client.connect();
+
+  if (write) {
+    // 사람이 로그에서 알아볼 수 있게 남긴다. 조용한 쓰기 접속을 만들지 않는다.
+    console.log(`  [쓰기 접속] ${opts.reason}`);
+  } else {
+    // 세션 전체를 읽기 전용으로. 이후 어떤 트랜잭션도 쓰기를 못 한다
+    // (SQLSTATE 25006). 스크립트가 begin read only 를 빠뜨려도 안전하다.
+    await client.query("set session characteristics as transaction read only");
+  }
+  return client;
+}
+
+/** 읽기 전용임을 실제로 확인한다 — 도구가 스스로를 검증하게 둔다. */
+export async function assertReadOnly(client) {
+  const { rows } = await client.query("show default_transaction_read_only");
+  if (rows[0]?.default_transaction_read_only !== "on") {
+    throw new Error("읽기 전용 세션이 아닙니다 — 중단");
+  }
+}
+
 /** 오류 메시지 등에서 비밀값을 지운다 (접속문자열·비밀번호가 로그에 새지 않게) */
 export function scrub(text, ...secrets) {
   let s = String(text ?? "");

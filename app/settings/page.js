@@ -148,7 +148,11 @@ export default function SettingsPage() {
       {/* 도움·운영 — 버그 제보는 로그인 없이도 화면은 보이고 안에서 안내한다 */}
       <section className="rounded-2xl bg-white p-4 shadow-sm">
         <p className="mb-1 text-xs font-bold text-[#0c4470]/40">도움</p>
-        <Link href="/settings/bug-report" className="flex w-full items-center justify-between">
+        <Link href="/settings/verification" className="flex w-full items-center justify-between">
+          <span className="text-sm font-medium text-[#0c4470]">학생 인증</span>
+          <span className="shrink-0 text-xs font-bold text-[#0095da]">신청 ›</span>
+        </Link>
+        <Link href="/settings/bug-report" className="mt-3 flex w-full items-center justify-between border-t border-black/5 pt-3">
           <span className="text-sm font-medium text-[#0c4470]">버그 제보 · 건의</span>
           <span className="shrink-0 text-xs font-bold text-[#0095da]">보내기 ›</span>
         </Link>

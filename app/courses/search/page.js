@@ -6,7 +6,7 @@ import {
   ALL_COURSES,
   DAYS,
   DEPARTMENTS,
-  SEMESTERS,
+  SEMESTERS_NEWEST_FIRST,
   SEMESTER_LABELS,
   DEFAULT_SEMESTER,
   colorFor,
@@ -116,7 +116,7 @@ export default function CourseSearchPage() {
 
       {/* 학기 칩 */}
       <div className="flex gap-1.5 overflow-x-auto pb-0.5">
-        {SEMESTERS.map((s) => (
+        {SEMESTERS_NEWEST_FIRST.map((s) => (
           <button
             key={s}
             onClick={() => setSemester(s)}

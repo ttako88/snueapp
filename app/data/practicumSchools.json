@@ -1,0 +1,173 @@
+{
+  "_meta": {
+    "source": "assets/practicum/2026-1_교육실습_협력학교_배정현황표.hwp",
+    "parsedBy": "scripts/manual/parse-hwp-schools.mjs",
+    "parsedAt": "2026-07-22",
+    "warning": "최소 HWP 파서로 추출했다. 표 구조를 완전히 복원하지 못하므로 지역·배정인원 매핑은 사람이 검수해야 한다. 학교명은 원문 축약형(예: 개운초)이고 정식명(개운초등학교)은 NEIS 조회로 보강한다.",
+    "verified": false,
+    "semester": "2026-1",
+    "resolvedAt": "2026-07-21",
+    "resolveNote": "NEIS 학교기본정보 API 로 정식명·코드·주소·전화·홈페이지를 보강. 후보가 2개 이상인 학교는 candidates 에만 담고 확정하지 않았다."
+  },
+  "_summary": {
+    "관찰실습": {
+      "학교수": 6,
+      "인원": 314,
+      "반": {
+        "A반": 142,
+        "B반": 172
+      }
+    },
+    "수업실습": {
+      "인원": 296
+    },
+    "종합실습": {
+      "학교수": 13,
+      "인원": 295
+    },
+    "note": "배정인원은 휴학·실습포기 등으로 변동 가능 (원문 각주)"
+  },
+  "_regions": [
+    "서부",
+    "중부",
+    "성북강북",
+    "동부",
+    "남부",
+    "북부",
+    "강동송파",
+    "강서양천",
+    "강남서초",
+    "동작관악",
+    "성동광진"
+  ],
+  "schools": [
+    {
+      "short": "개운초",
+      "full": "서울개운초등학교",
+      "neisCode": "7121298",
+      "officeCode": "B10",
+      "address": "서울특별시 성북구 정릉로48길 52",
+      "tel": "02-925-8838",
+      "homepage": " http://gaewoon.sen.es.kr/"
+    },
+    {
+      "short": "거여초",
+      "full": "서울거여초등학교",
+      "neisCode": "7130110",
+      "officeCode": "B10",
+      "address": "서울특별시 송파구 마천로25길 18",
+      "tel": "02-2160-5400",
+      "homepage": "http://geo-yeo.sen.es.kr"
+    },
+    {
+      "short": "교대부초",
+      "full": "서울교육대학교부설초등학교",
+      "neisCode": "7091367"
+    },
+    {
+      "short": "구일초",
+      "full": "서울구일초등학교",
+      "neisCode": "7041109",
+      "officeCode": "B10",
+      "address": "서울특별시 구로구 구일로 68",
+      "tel": "02-869-9101",
+      "homepage": "http://guil.sen.es.kr"
+    },
+    {
+      "short": "대명초",
+      "full": "서울대명초등학교",
+      "neisCode": "7130117",
+      "officeCode": "B10",
+      "address": "서울특별시 강동구 상암로 271",
+      "tel": "02-481-7871",
+      "homepage": "http://daemyeong.sen.es.kr"
+    },
+    {
+      "short": "대왕초",
+      "full": "서울대왕초등학교",
+      "neisCode": "7091377",
+      "officeCode": "B10",
+      "address": "서울특별시 강남구 헌릉로618길 8",
+      "tel": "02-3412-0123",
+      "homepage": "http://daewang.sen.es.kr"
+    },
+    {
+      "short": "봉현초",
+      "full": "서울봉현초등학교",
+      "neisCode": "7132098",
+      "officeCode": "B10",
+      "address": "서울특별시 관악구 성현로 117",
+      "tel": "02-885-1985",
+      "homepage": "http://bonghyun.sen.es.kr"
+    },
+    {
+      "short": "상수초",
+      "full": "서울상수초등학교",
+      "neisCode": "7051129",
+      "officeCode": "B10",
+      "address": "서울특별시 노원구 동일로216길 66",
+      "tel": "02-932-1442",
+      "homepage": "http://sangsoo.sen.es.kr"
+    },
+    {
+      "short": "양원숲초",
+      "full": "서울양원숲초등학교",
+      "neisCode": "7021205",
+      "officeCode": "B10",
+      "address": "서울특별시 중랑구 양원역로 95",
+      "tel": "02-493-9701",
+      "homepage": "https://yangwonsoop.sen.es.kr/index.do"
+    },
+    {
+      "short": "온곡초",
+      "full": "서울온곡초등학교",
+      "neisCode": "7051147",
+      "officeCode": "B10",
+      "address": "서울특별시 노원구 한글비석로52길 59",
+      "tel": "02-937-7136",
+      "homepage": "http://ongok.sen.es.kr"
+    },
+    {
+      "short": "옥정초",
+      "full": "서울옥정초등학교",
+      "neisCode": "7134104",
+      "officeCode": "B10",
+      "address": "서울특별시 성동구 한림말길 43",
+      "tel": "02-2297-0148",
+      "homepage": "http://okjeong.sen.es.kr"
+    },
+    {
+      "short": "정덕초",
+      "full": "서울정덕초등학교",
+      "neisCode": "7121330",
+      "officeCode": "B10",
+      "address": "서울특별시 성북구 아리랑로 63",
+      "tel": "02-928-0422",
+      "homepage": "http://jeongdeok.sen.es.kr"
+    },
+    {
+      "short": "탑산초",
+      "full": "서울탑산초등학교",
+      "neisCode": "7081479",
+      "officeCode": "B10",
+      "address": "서울특별시 강서구 허준로 109",
+      "tel": "02-2659-5101",
+      "homepage": "http://top.sen.es.kr"
+    },
+    {
+      "short": "홍연초",
+      "full": "서울홍연초등학교",
+      "neisCode": "7031167",
+      "officeCode": "B10",
+      "address": "서울특별시 서대문구 백련사길 55",
+      "tel": "02-394-1802",
+      "homepage": "http://hyc.sen.es.kr"
+    }
+  ],
+  "_falsePositives": [
+    {
+      "token": "강남서초",
+      "reason": "학교가 아니라 지역명(강남·서초구). '초'로 끝나 파서가 학교로 오인했다. 자동 추출 결과를 그대로 믿으면 안 되는 사례."
+    }
+  ]
+}

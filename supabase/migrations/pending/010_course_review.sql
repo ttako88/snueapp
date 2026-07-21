@@ -183,7 +183,7 @@ create table if not exists private.course_reviews (
   semester      text    not null check (semester ~ '^[0-9]{4}-[12]$'),  -- 내부 전용, 공개 금지
 
   status        text    not null default 'draft' check (status in (
-                  'draft','submitted','published','corrected',
+                  'draft','submitted','published','corrected','rejected',
                   'withdrawn_by_author','hidden_by_moderation','preserved_for_case','purged')),
 
   attendance    text    check (attendance   in ('복합적','전자출결','직접호명','지정좌석','반영안함')),
@@ -223,18 +223,28 @@ create table if not exists private.course_reviews (
     references private.course_review_actor_aliases (id, subject_id) on delete restrict
 );
 
--- 활성 슬롯 (REQUIRED-1)
---  포함: draft·submitted·published·hidden_by_moderation·preserved_for_case
---        └ hidden/preserved를 넣어야 제재된 평가를 새로 써서 우회하는 걸 막는다.
---  제외: corrected(구버전)·withdrawn_by_author·purged
---        └ corrected를 빼야 "구버전 corrected + 신버전 published" 공존이 가능하다.
-create unique index if not exists course_reviews_one_active
+-- 활성 슬롯을 **둘로 나눈다** (GPT: 정정 심사 중 기존 평가가 사라지면 안 됨)
+--   ① 공개/보류 슬롯 1개 — draft·published·hidden·preserved
+--      hidden/preserved를 포함해야 제재된 평가를 새로 써서 우회하는 걸 막는다.
+--      corrected(구버전)·withdrawn·purged·rejected는 제외.
+--   ② 심사 대기 슬롯 1개 — submitted
+--      기존 공개본을 유지한 채 정정본이 심사를 기다릴 수 있게 분리했다.
+--      한 수강 건에 대기본은 최대 1개.
+create unique index if not exists course_reviews_one_live
   on private.course_reviews (subject_id, actor_alias_id, semester)
-  where status in ('draft','submitted','published','hidden_by_moderation','preserved_for_case');
+  where status in ('draft','published','hidden_by_moderation','preserved_for_case');
 
--- 정정 분기 금지: 한 구버전을 두 신버전이 대체할 수 없다
+create unique index if not exists course_reviews_one_pending
+  on private.course_reviews (subject_id, actor_alias_id, semester)
+  where status = 'submitted';
+
+-- 정정 분기 금지: 한 구버전을 **살아있는** 두 신버전이 대체할 수 없다.
+-- 단 반려·철회·파기된 정정본은 제외한다 — 안 그러면 정정이 한 번 반려되면
+-- 그 버전은 영영 다시 고칠 수 없게 된다(행동검증에서 실제로 막혔음).
 create unique index if not exists course_reviews_supersedes_unique
-  on private.course_reviews (supersedes_id) where supersedes_id is not null;
+  on private.course_reviews (supersedes_id)
+  where supersedes_id is not null
+    and status not in ('rejected','withdrawn_by_author','purged');
 
 create index if not exists course_reviews_subject_published
   on private.course_reviews (subject_id) where status = 'published';
@@ -659,6 +669,9 @@ grant  execute on function public.withdraw_course_review(bigint) to authenticate
 --     구조화 항목만 고치는 정정은 body가 없으므로 바로 published로 간다.
 --     (검토 중에도 구버전을 보여주려면 활성 슬롯 설계를 바꿔야 하므로 다음 배치 논의)
 -- ------------------------------------------------------------
+-- p_body_is_set: 자유서술을 "건드리지 않음"과 "비우기"를 구분하기 위한 플래그.
+--   coalesce(p_body, old.body)만 쓰면 사용자가 본문을 지울 방법이 없다.
+--   false면 기존 본문 유지, true면 p_body 값으로 교체(null이면 삭제).
 create or replace function public.correct_course_review(
   p_review_id   bigint,
   p_attendance  text default null,
@@ -666,12 +679,14 @@ create or replace function public.correct_course_review(
   p_assignment  text default null,
   p_team_project text default null,
   p_grading     text default null,
-  p_body        text default null)
+  p_body        text default null,
+  p_body_is_set boolean default false)
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare
-  v_old private.course_reviews%rowtype;
-  v_new bigint;
-  v_status text;
+  v_old  private.course_reviews%rowtype;
+  v_new  bigint;
+  v_body text;
+  v_body_changed boolean;
 begin
   if not authz.is_writable_member() then raise exception 'not allowed'; end if;
 
@@ -679,49 +694,120 @@ begin
   select * into v_old from private.course_reviews r
    where r.id = p_review_id for update;
   if v_old.id is null then raise exception 'not found'; end if;
-
-  -- 본인 것만
   if v_old.member_id is distinct from auth.uid() then raise exception 'not found'; end if;
 
-  -- 현재 공개 중인 버전만 정정 대상. preserved_for_case(사건 보존 중)는 금지.
+  -- 공개 중인 버전만 정정 대상. hidden_by_moderation·preserved_for_case는 차단.
   if v_old.status <> 'published' then
     return jsonb_build_object('status','not_correctable','current',v_old.status);
   end if;
 
-  -- 자유서술이 바뀌면 재검토가 필요하다 (사전검토 원칙)
-  v_status := case when p_body is null then 'published' else 'submitted' end;
+  v_body := case when p_body_is_set then p_body else v_old.body end;
+  v_body_changed := v_body is distinct from v_old.body;
 
-  -- 구버전 내리기
-  update private.course_reviews r
-     set status = 'corrected', updated_at = clock_timestamp()
-   where r.id = p_review_id;
+  if not v_body_changed then
+    -- 구조화 항목만 고치는 정정: 재검토가 필요 없으므로 **원자 교체**.
+    update private.course_reviews r
+       set status = 'corrected', updated_at = clock_timestamp()
+     where r.id = p_review_id;
 
-  -- 신버전: subject·alias·semester·member·contribution을 그대로 승계한다.
-  -- (contribution을 승계해야 보상·회수가 같은 대상을 가리킨다)
+    insert into private.course_reviews (
+      subject_id, member_id, actor_alias_id, contribution_id, semester, status,
+      attendance, exam_count, assignment, team_project, grading,
+      body, body_reviewed_at, body_reviewed_by, supersedes_id, published_at)
+    values (
+      v_old.subject_id, v_old.member_id, v_old.actor_alias_id, v_old.contribution_id,
+      v_old.semester, 'published',
+      coalesce(p_attendance, v_old.attendance),
+      coalesce(p_exam_count, v_old.exam_count),
+      coalesce(p_assignment, v_old.assignment),
+      coalesce(p_team_project, v_old.team_project),
+      coalesce(p_grading, v_old.grading),
+      v_old.body, v_old.body_reviewed_at, v_old.body_reviewed_by,
+      v_old.id, clock_timestamp())
+    returning id into v_new;
+
+    return jsonb_build_object('status','ok','mode','swapped','new_review_id',v_new,'new_status','published');
+  end if;
+
+  -- ★ 자유서술이 바뀌면 재검토가 필요하다. 이때 기존 공개본을 내리지 않는다 —
+  --   심사하는 동안 정상적인 평가가 사라지면 안 되기 때문(GPT 지적).
+  --   정정본만 submitted로 대기시키고, 승인 시점에 원자 교체한다.
   insert into private.course_reviews (
     subject_id, member_id, actor_alias_id, contribution_id, semester, status,
-    attendance, exam_count, assignment, team_project, grading, body,
-    supersedes_id, published_at)
+    attendance, exam_count, assignment, team_project, grading, body, supersedes_id)
   values (
     v_old.subject_id, v_old.member_id, v_old.actor_alias_id, v_old.contribution_id,
-    v_old.semester, v_status,
-    coalesce(p_attendance,   v_old.attendance),
-    coalesce(p_exam_count,   v_old.exam_count),
-    coalesce(p_assignment,   v_old.assignment),
+    v_old.semester, 'submitted',
+    coalesce(p_attendance, v_old.attendance),
+    coalesce(p_exam_count, v_old.exam_count),
+    coalesce(p_assignment, v_old.assignment),
     coalesce(p_team_project, v_old.team_project),
-    coalesce(p_grading,      v_old.grading),
-    p_body,
-    v_old.id,
-    case when v_status = 'published' then clock_timestamp() end)
+    coalesce(p_grading, v_old.grading),
+    v_body, v_old.id)
   returning id into v_new;
 
-  -- ★ 정정에는 보상을 다시 주지 않는다 (원장에 아무것도 넣지 않음)
-  return jsonb_build_object('status','ok','new_review_id',v_new,'new_status',v_status);
+  -- 정정에는 보상을 다시 주지 않는다 (원장에 아무것도 넣지 않음)
+  return jsonb_build_object('status','ok','mode','pending_review',
+                            'new_review_id',v_new,'new_status','submitted');
 end $$;
-revoke execute on function public.correct_course_review(bigint, text, smallint, text, text, text, text)
+revoke execute on function public.correct_course_review(bigint, text, smallint, text, text, text, text, boolean)
   from public, anon, authenticated;
-grant  execute on function public.correct_course_review(bigint, text, smallint, text, text, text, text)
+grant  execute on function public.correct_course_review(bigint, text, smallint, text, text, text, text, boolean)
   to authenticated;
+
+-- ------------------------------------------------------------
+-- 12. 정정본 심사 (operator) — 승인 시 원자 교체, 반려 시 기존본 유지
+-- ------------------------------------------------------------
+create or replace function public.review_course_correction(
+  p_review_id bigint, p_approve boolean, p_reason text)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_role text; v_pending private.course_reviews%rowtype; v_live bigint;
+begin
+  v_role := private.actor_role_check('operator');
+  if p_approve is null then raise exception 'decision required'; end if;
+  if p_reason is null or btrim(p_reason) = '' then raise exception 'reason required'; end if;
+  if char_length(btrim(p_reason)) > 500 then raise exception 'reason too long'; end if;
+
+  select * into v_pending from private.course_reviews r
+   where r.id = p_review_id and r.status = 'submitted' for update;
+  if v_pending.id is null then
+    return jsonb_build_object('status','not_pending');
+  end if;
+
+  if p_approve then
+    -- 기존 공개본을 내리고 정정본을 올린다 — 같은 트랜잭션
+    update private.course_reviews r
+       set status = 'corrected', updated_at = clock_timestamp()
+     where r.subject_id = v_pending.subject_id
+       and r.actor_alias_id = v_pending.actor_alias_id
+       and r.semester = v_pending.semester
+       and r.status = 'published'
+    returning r.id into v_live;
+
+    update private.course_reviews r
+       set status = 'published',
+           published_at = clock_timestamp(),
+           body_reviewed_at = case when r.body is not null then clock_timestamp() end,
+           body_reviewed_by = case when r.body is not null then auth.uid() end,
+           updated_at = clock_timestamp()
+     where r.id = p_review_id;
+  else
+    -- 반려: 기존 공개본은 그대로 두고 정정본만 내린다
+    update private.course_reviews r
+       set status = 'rejected', updated_at = clock_timestamp()
+     where r.id = p_review_id;
+  end if;
+
+  insert into private.audit_logs (actor_id, action, target_type, target_id, reason)
+  values (auth.uid(), 'course_correction:' || case when p_approve then 'approve' else 'reject' end,
+          'course_review', p_review_id::text, p_reason);
+
+  -- ★ 승인해도 보상을 다시 주지 않는다 (contribution당 1회)
+  return jsonb_build_object('status','ok','approved',p_approve,'replaced_review_id',v_live);
+end $$;
+revoke execute on function public.review_course_correction(bigint, boolean, text)
+  from public, anon, authenticated;
+grant  execute on function public.review_course_correction(bigint, boolean, text) to authenticated;
 
 commit;
 

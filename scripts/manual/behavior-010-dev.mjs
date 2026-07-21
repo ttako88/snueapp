@@ -31,6 +31,7 @@ const stats = async (id) => (await client.query(`select public.course_review_sta
 
 const A_UUID = "00000000-0000-0000-0000-0000000010a1";
 const B_UUID = "00000000-0000-0000-0000-0000000010a2";
+const OP_UUID = B_UUID;  // 두 번째 합성 회원을 정정 심사 운영자로 사용
 const A = `'${A_UUID}'`;
 
 async function main() {
@@ -45,6 +46,9 @@ async function main() {
       ('${A_UUID}','00000000-0000-0000-0000-000000000000','authenticated','authenticated','t010a@example.invalid'),
       ('${B_UUID}','00000000-0000-0000-0000-000000000000','authenticated','authenticated','t010b@example.invalid')`);
     await client.query(`update private.members set nickname='평가자1', verification_status='verified' where id='${A_UUID}'`);
+    // 정정본 심사용 운영자
+    await client.query(`update private.members set nickname='운영자', verification_status='verified',
+      sanction='none', role='operator' where id='${OP_UUID}'`);
     await client.query(`insert into private.course_review_subjects (id, course_key, professor_key, course_name_display, professor_display)
       values (9001,'초등도덕교육론','김교수','초등도덕교육론','김교수'),
              (9002,'초등수학교육의이해','박교수','초등수학교육의 이해','박교수')`);
@@ -220,19 +224,68 @@ async function main() {
       `select public.correct_course_review(${pubR.id}, null, null, null, null, '보통') r`)).rows[0].r;
     rec("이미 corrected된 구버전은 재정정 불가", again2.status === "not_correctable", again2.status);
 
-    // 자유서술을 고치면 재검토 대기로 간다
+    // ★ 자유서술 정정: 기존 공개본이 심사 중에도 살아 있어야 한다
+    const live = corr.new_review_id;
     const corr2 = (await client.query(
-      `select public.correct_course_review(${corr.new_review_id}, null, null, null, null, null, '설명을 보탭니다') r`)).rows[0].r;
-    rec("자유서술 정정은 검토 대기(submitted)", corr2.status === "ok" && corr2.new_status === "submitted",
-      corr2.new_status);
+      `select public.correct_course_review(${live}, null, null, null, null, null, '설명을 보탭니다', true) r`)).rows[0].r;
+    rec("자유서술 정정은 대기(submitted)로 생성", corr2.mode === "pending_review", corr2.mode);
+
+    const { rows: [dur] } = await client.query(
+      `select (select status from private.course_reviews where id=${live}) live_status,
+              (select status from private.course_reviews where id=${corr2.new_review_id}) pend_status`);
+    rec("심사 중에도 기존 공개본이 그대로 공개됨",
+      dur.live_status === "published" && dur.pend_status === "submitted",
+      `기존=${dur.live_status} 대기=${dur.pend_status}`);
+
+    await mustFail("같은 수강 건에 대기 정정본 2개 금지",
+      `select public.correct_course_review(${live}, null, null, null, null, null, '또 고침', true)`);
+
+    // 반려하면 기존본 유지
+    await actAs(OP_UUID);
+    const rej = (await client.query(
+      `select public.review_course_correction(${corr2.new_review_id}, false, '근거 부족') r`)).rows[0].r;
+    const { rows: [afterRej] } = await client.query(
+      `select (select status from private.course_reviews where id=${live}) l,
+              (select status from private.course_reviews where id=${corr2.new_review_id}) p`);
+    rec("반려 시 기존본 유지·정정본만 rejected",
+      rej.status === "ok" && afterRej.l === "published" && afterRej.p === "rejected",
+      `기존=${afterRej.l} 정정본=${afterRej.p}`);
+
+    // 승인하면 원자 교체
+    await actAs(A_UUID);
+    const corr3 = (await client.query(
+      `select public.correct_course_review(${live}, null, null, null, null, null, '보완했습니다', true) r`)).rows[0].r;
+    await actAs(OP_UUID);
+    const app = (await client.query(
+      `select public.review_course_correction(${corr3.new_review_id}, true, '확인 완료') r`)).rows[0].r;
+    const { rows: [afterApp] } = await client.query(
+      `select (select status from private.course_reviews where id=${live}) l,
+              (select status from private.course_reviews where id=${corr3.new_review_id}) p,
+              (select body_reviewed_at is not null from private.course_reviews where id=${corr3.new_review_id}) rv`);
+    rec("승인 시 기존본 corrected·정정본 published로 원자 교체",
+      app.status === "ok" && afterApp.l === "corrected" && afterApp.p === "published" && afterApp.rv === true,
+      `기존=${afterApp.l} 정정본=${afterApp.p}`);
+
+    const { rows: [noPay2] } = await client.query(
+      `select count(*)::int n from private.ticket_ledger where contribution_id = '${pubR.contribution_id}'`);
+    rec("정정 승인에도 보상 재지급 없음", noPay2.n === 0, `${noPay2.n}건`);
+
+    // 본문 지우기: p_body_is_set=true + null
+    await actAs(A_UUID);
+    const clr = (await client.query(
+      `select public.correct_course_review(${corr3.new_review_id}, null, null, null, null, null, null, true) r`)).rows[0].r;
+    rec("본문 삭제 정정은 '미변경'과 구분된다", clr.mode === "pending_review", clr.mode);
+    await actAs(OP_UUID);
+    await client.query(`select public.review_course_correction(${clr.new_review_id}, true, '본문 삭제 승인')`);
 
     // 사건 보존 중인 평가는 정정 금지
-    await client.query(`update private.course_reviews set status='preserved_for_case' where id=${corr2.new_review_id}`);
-    const corr3 = (await client.query(
-      `select public.correct_course_review(${corr2.new_review_id}, null, null, null, null, '보통') r`)).rows[0].r;
-    rec("사건 보존 중(preserved_for_case)인 평가는 정정 불가", corr3.status === "not_correctable", corr3.status);
+    await client.query(`update private.course_reviews set status='preserved_for_case' where id=${clr.new_review_id}`);
+    await actAs(A_UUID);
+    const corr4 = (await client.query(
+      `select public.correct_course_review(${clr.new_review_id}, null, null, null, null, '보통') r`)).rows[0].r;
+    rec("사건 보존 중(preserved_for_case)인 평가는 정정 불가", corr4.status === "not_correctable", corr4.status);
     await client.query(`update private.course_reviews set status='withdrawn_by_author', withdrawn_at=now()
-       where id=${corr2.new_review_id}`);
+       where id=${clr.new_review_id}`);
 
     // ── 통계: 표본은 '서로 다른 작성자' ──
     const ALS = alOther;  // 위에서 만든 9002·A의 별칭 재사용 (한 과목 한 회원 1개)

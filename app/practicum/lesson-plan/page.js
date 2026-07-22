@@ -13,6 +13,7 @@ import { useAuth } from "../../lib/identity/useAuth";
 import { isEnabled } from "../../lib/features.js";
 import LessonPlanView from "../../components/LessonPlanView";
 import { downloadLessonPlan, printLessonPlan } from "../../lib/lessonExport";
+import { myLessonPlanAccess, saveLessonPlan } from "../../lib/community/lessonPlanSaves";
 import {
   GRADES, subjectsForGrade, TEACHING_MODELS, PLAN_TYPES, DURATIONS,
   validatePlanInput, withDefaults, defaultModelFor, OPTIONAL_LIMITS,
@@ -57,6 +58,8 @@ export default function LessonPlanPage() {
   const [results, setResults] = useState({}); // { brief: data, full: data }
   const [view, setView] = useState(null);     // 현재 보는 종류 ('brief'|'full')
   const result = view ? results[view] : null; // 파생: 지금 화면에 표시할 결과
+  const [access, setAccess] = useState(null); // 내 이용권 상태 {allowed,source,remaining}
+  const [saveMsg, setSaveMsg] = useState(null); // 저장 결과 안내
   // 실제 교과서 단원 목록. 있으면 자유 입력 대신 골라서 근거가 100% 매칭된다.
   // 없으면(데이터 미비·네트워크 실패) 자유 입력으로 떨어진다 — 둘 다 동작.
   const [unitList, setUnitList] = useState([]);
@@ -87,6 +90,32 @@ export default function LessonPlanPage() {
     setGrade(g);
     // 1~2학년은 통합교과라 고를 수 있는 교과가 다르다. 남아 있으면 서버가 거부한다.
     if (!subjectsForGrade(g).includes(subject)) setSubject(subjectsForGrade(g)[0]);
+  }
+
+  // 내 이용권 상태(잔여 횟수 표시용).
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!session) { if (alive) setAccess(null); return; }
+      const { data } = await myLessonPlanAccess();
+      if (alive) setAccess(data ?? null);
+    })();
+    return () => { alive = false; };
+  }, [session]);
+
+  // 지금 보고 있는 지도안을 저장한다(텍스트라 가볍다). 제목은 폼값에서 자동 생성.
+  async function saveCurrent() {
+    if (!result?.text) return;
+    const type = PLAN_TYPES.find((t) => t.key === result.planType);
+    const title = `${grade}학년 ${subject}${unit ? " " + unit : ""} · ${type?.label ?? "지도안"}`.slice(0, 120);
+    setSaveMsg(null);
+    const { error } = await saveLessonPlan({ planType: result.planType, title, body: result.text });
+    if (error) {
+      const m = { limit_reached: "저장은 최대 50개까지예요. '내 지도안'에서 정리해 주세요.", unauthorized: "로그인이 필요해요." }[error.message];
+      setSaveMsg({ type: "error", text: m || "저장하지 못했어요." });
+    } else {
+      setSaveMsg({ type: "ok", text: "저장했어요. '내 지도안'에서 다시 볼 수 있어요." });
+    }
   }
 
   async function submit(planTypeOverride) {
@@ -135,7 +164,20 @@ export default function LessonPlanPage() {
       <div className="flex items-center gap-2">
         <Link href="/practicum" className="text-sm text-[#0c4470]/50">‹</Link>
         <h1 className="text-base font-bold text-[#0c4470]">지도안 만들기</h1>
+        {session && (
+          <Link href="/practicum/lesson-plan/saved" className="ml-auto text-xs font-bold text-[#0095da]">📁 내 지도안</Link>
+        )}
       </div>
+
+      {/* 내 이용권 잔여 표시 */}
+      {session && access?.source === "owner" && (
+        <p className="rounded-lg bg-[#eef7ff] px-3 py-1.5 text-[11px] font-bold text-[#0c4470]/70">관리자 — 지도안을 무제한으로 만들 수 있어요.</p>
+      )}
+      {session && access?.source === "entitlement" && (
+        <p className="rounded-lg bg-[#eef7ff] px-3 py-1.5 text-[11px] font-bold text-[#0c4470]/70">
+          이용권: {access.grant_type === "unlimited" ? "무제한" : `남은 횟수 ${access.remaining ?? 0}회`}
+        </p>
+      )}
 
       {!authLoading && !session && (
         <div className="rounded-2xl border border-dashed border-[#0095da]/30 bg-white p-5 text-center">
@@ -365,6 +407,11 @@ export default function LessonPlanPage() {
                   className="rounded-lg bg-[#f2f6fa] px-3 py-1.5 text-xs font-bold text-[#0c4470]/70">
                   📄 한글·워드(.doc)
                 </button>
+                {/* 저장 — 새로고침해도 '내 지도안'에서 다시 볼 수 있게. */}
+                <button onClick={saveCurrent}
+                  className="rounded-lg bg-[#eaf6ff] px-3 py-1.5 text-xs font-bold text-[#0095da]">
+                  💾 저장
+                </button>
                 {/* 세안이 아직 없을 때만 제안 — 이미 뽑았으면 위 탭으로 오간다(중복 과금 방지). */}
                 {result.planType === "brief" && !results.full && (
                   <button
@@ -375,6 +422,9 @@ export default function LessonPlanPage() {
                   </button>
                 )}
               </div>
+              {saveMsg && (
+                <p className={`mt-1.5 text-[11px] font-bold ${saveMsg.type === "ok" ? "text-[#1a9b6c]" : "text-[#d05b6a]"}`}>{saveMsg.text}</p>
+              )}
 
               {/* 약안·세안 폼으로 렌더 — 캡처해서 바로 쓸 수 있게 */}
               <div className="mt-2 max-h-[60vh] overflow-auto rounded-xl border border-black/5 bg-white p-3">

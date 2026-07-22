@@ -282,6 +282,10 @@ export default function LoginPage() {
                 <FieldWithCheck label="학번" value={su.hakbeon} onChange={(v) => setField("hakbeon", v)}
                   placeholder="학번 8자리" inputMode="numeric" avail={hAvail}
                   okText="가입 가능한 학번입니다" takenText="이미 가입된 학번입니다" formatText="학번 형식(8자리)을 확인해 주세요" />
+                <p className="mt-1 text-[11px] leading-relaxed text-[#0c4470]/40">
+                  입력한 학번은 <b className="text-[#0c4470]/55">추후 재학생 인증 서류의 정보와 대조</b>됩니다.
+                  정보가 다를 경우 재학생 인증 및 일부 서비스 이용이 제한될 수 있어요.
+                </p>
                 <FieldWithCheck label="닉네임" value={su.nickname} onChange={(v) => setField("nickname", v)}
                   placeholder="닉네임 (2~16자)" avail={nAvail}
                   okText="사용 가능한 닉네임입니다" takenText="이미 사용 중인 닉네임입니다" formatText="닉네임은 2~16자예요" />

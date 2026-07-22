@@ -126,7 +126,7 @@ export const FEATURES = {
     requires: "024(동의·파생) + 025(usage_events) 적용 + /api/track + 대시보드",
   },
   ga4: {
-    enabled: false,
+    enabled: true, // 2026-07-23: NEXT_PUBLIC_GA_MEASUREMENT_ID(G-T287GHDNWQ) 등록·CSP 없음. 동의한 로그인 사용자만 GA 로드.
     label: "GA4 방문 통계",
     summary: "익명 방문·페이지뷰만. Consent Mode(기본 거부) + 학과·학년·학번 미전송",
     needsDb: false,

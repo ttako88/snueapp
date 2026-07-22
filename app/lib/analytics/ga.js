@@ -11,7 +11,9 @@
 //   · 익명 방문·페이지뷰만. 학과·학년·학번·회원ID·쿼리 미전송. IP 익명화.
 // ============================================================
 
-export const GA_ID = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID || null;
+// 측정 ID는 클라이언트에 그대로 박히는 공개값이라 시크릿이 아니다. env 를 우선
+// 쓰되(교체·회전 편의), 없으면 등록된 SNUE 속성 ID 로 폴백한다(2026-07-23).
+export const GA_ID = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID || "G-T287GHDNWQ";
 
 // 측정 ID 형식 검증 — 인라인 스크립트에 넣기 전에 반드시 통과해야 한다(주입 차단).
 export const GA_ID_RE = /^G-[A-Z0-9]{4,20}$/;

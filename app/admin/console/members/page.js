@@ -106,6 +106,10 @@ function MemberDetail({ memberId, canManageCost, onClose, onChanged }) {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [detailTick, setDetailTick] = useState(0);
+  // window.prompt 는 모바일·인앱 웹뷰에서 막혀서 버튼이 안 먹는 것처럼 보인다.
+  // 인앱 사유 입력으로 대체한다: 버튼을 누르면 pending 을 세우고 사유칸을 띄운다.
+  const [pending, setPending] = useState(null); // { kind:'grant'|'revoke', grantType?, quota?, grantId?, title }
+  const [reason, setReason] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -121,28 +125,25 @@ function MemberDetail({ memberId, canManageCost, onClose, onChanged }) {
 
   const refresh = () => { setDetailTick((t) => t + 1); onChanged?.(); };
 
-  const grantLessonPlan = async ({ grantType, quota }) => {
-    const reason = window.prompt("부여 사유를 적어주세요 (감사 기록에 남아요)");
-    if (!reason || !reason.trim()) return;
+  const confirmPending = async () => {
+    const r = reason.trim();
+    if (!r || !pending) return;
+    const p = pending;
     setBusy(true);
-    const expiresAt = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
-    const { error: err } = await grantEntitlement({
-      memberId, key: "lesson_plan_generate", grantType,
-      quota: grantType === "quota" ? quota : null,
-      expiresAt: grantType === "quota" ? expiresAt : null, reason: reason.trim(),
-    });
+    let err = null;
+    if (p.kind === "grant") {
+      const expiresAt = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
+      ({ error: err } = await grantEntitlement({
+        memberId, key: "lesson_plan_generate", grantType: p.grantType,
+        quota: p.grantType === "quota" ? p.quota : null,
+        expiresAt: p.grantType === "quota" ? expiresAt : null, reason: r,
+      }));
+    } else {
+      ({ error: err } = await revokeEntitlement({ grantId: p.grantId, reason: r }));
+    }
     setBusy(false);
-    if (err) { setError(err.message || "부여 실패"); return; }
-    refresh();
-  };
-
-  const revoke = async (grantId) => {
-    const reason = window.prompt("회수 사유를 적어주세요");
-    if (!reason || !reason.trim()) return;
-    setBusy(true);
-    const { error: err } = await revokeEntitlement({ grantId, reason: reason.trim() });
-    setBusy(false);
-    if (err) { setError(err.message || "회수 실패"); return; }
+    if (err) { setError(err.message || (p.kind === "grant" ? "부여 실패" : "회수 실패")); return; }
+    setPending(null); setReason("");
     refresh();
   };
 
@@ -188,7 +189,8 @@ function MemberDetail({ memberId, canManageCost, onClose, onChanged }) {
                       </span>
                     </span>
                     {canManageCost && e.status === "active" && (
-                      <button disabled={busy} onClick={() => revoke(e.grant_id)}
+                      <button disabled={busy}
+                        onClick={() => { setReason(""); setPending({ kind: "revoke", grantId: e.grant_id, title: "이용권 회수" }); }}
                         className="rounded-lg bg-white px-2.5 py-1 text-[11px] font-bold text-[#c0392b] disabled:opacity-50">
                         회수
                       </button>
@@ -206,17 +208,42 @@ function MemberDetail({ memberId, canManageCost, onClose, onChanged }) {
                   결제 없이 이 회원이 지도안을 뽑을 수 있게 해요.
                 </p>
                 <div className="mt-2 flex flex-wrap gap-1.5">
-                  <button disabled={busy} onClick={() => grantLessonPlan({ grantType: "quota", quota: 10 })}
+                  <button disabled={busy}
+                    onClick={() => { setReason(""); setPending({ kind: "grant", grantType: "quota", quota: 10, title: "지도안 생성권 · 30일 10회" }); }}
                     className="rounded-lg bg-[#0095da] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">
                     30일 · 10회
                   </button>
-                  <button disabled={busy} onClick={() => grantLessonPlan({ grantType: "quota", quota: 3 })}
+                  <button disabled={busy}
+                    onClick={() => { setReason(""); setPending({ kind: "grant", grantType: "quota", quota: 3, title: "지도안 생성권 · 30일 3회" }); }}
                     className="rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-[#0095da] disabled:opacity-50">
                     30일 · 3회
                   </button>
-                  <button disabled={busy} onClick={() => grantLessonPlan({ grantType: "unlimited" })}
+                  <button disabled={busy}
+                    onClick={() => { setReason(""); setPending({ kind: "grant", grantType: "unlimited", title: "지도안 생성권 · 무제한" }); }}
                     className="rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-[#0c4470]/70 disabled:opacity-50">
                     무제한(무기한)
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 사유 입력 패널 — window.prompt 대체(모바일/웹뷰 호환). */}
+            {pending && (
+              <div className="mt-3 rounded-xl border border-[#0095da]/30 bg-white p-3">
+                <p className="text-xs font-bold text-[#0c4470]">{pending.title}</p>
+                <p className="mt-0.5 text-[11px] text-[#0c4470]/55">사유를 적어주세요 (감사 기록에 남아요).</p>
+                <input autoFocus value={reason} onChange={(e) => setReason(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && confirmPending()}
+                  placeholder="예: 베타테스트 참여"
+                  className="mt-2 w-full rounded-lg bg-[#f2f6fa] px-3 py-2 text-sm text-[#0c4470] outline-none" />
+                <div className="mt-2 flex gap-1.5">
+                  <button disabled={busy || !reason.trim()} onClick={confirmPending}
+                    className="rounded-lg bg-[#0095da] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-40">
+                    확인
+                  </button>
+                  <button disabled={busy} onClick={() => { setPending(null); setReason(""); }}
+                    className="rounded-lg bg-[#f2f6fa] px-3 py-1.5 text-xs font-bold text-[#0c4470]/60">
+                    취소
                   </button>
                 </div>
               </div>

@@ -60,9 +60,6 @@ export default function SettingsPage() {
     <div className="flex flex-col gap-4 px-4 py-4">
       <h2 className="text-lg font-bold text-[#0c4470]">설정</h2>
 
-      {/* 데이터 동의 (productAnalytics 켜지고 로그인 시에만 노출) */}
-      <ConsentSettings />
-
       {/* 계정 (게시판용 로그인) */}
       <section className="rounded-2xl bg-white p-4 shadow-sm">
         <p className="mb-1 text-xs font-bold text-[#0c4470]/40">계정</p>
@@ -167,6 +164,9 @@ export default function SettingsPage() {
           </Link>
         )}
       </section>
+
+      {/* 데이터 동의 — 맨 아래 배치(상단은 사용자를 쫓아냄). productAnalytics+로그인 시에만 노출 */}
+      <ConsentSettings />
 
       <p className="text-center text-[11px] text-[#0c4470]/30">앞으로 추가되는 설정도 여기 모아둘게요</p>
 

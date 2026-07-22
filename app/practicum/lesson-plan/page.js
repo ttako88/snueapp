@@ -53,7 +53,10 @@ export default function LessonPlanPage() {
   const [showMore, setShowMore] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState(null);
-  const [result, setResult] = useState(null);
+  // 약안·세안을 각각 보전한다 — 세안을 뽑아도 돈 주고 만든 약안이 날아가지 않게.
+  const [results, setResults] = useState({}); // { brief: data, full: data }
+  const [view, setView] = useState(null);     // 현재 보는 종류 ('brief'|'full')
+  const result = view ? results[view] : null; // 파생: 지금 화면에 표시할 결과
   // 실제 교과서 단원 목록. 있으면 자유 입력 대신 골라서 근거가 100% 매칭된다.
   // 없으면(데이터 미비·네트워크 실패) 자유 입력으로 떨어진다 — 둘 다 동작.
   const [unitList, setUnitList] = useState([]);
@@ -92,7 +95,8 @@ export default function LessonPlanPage() {
     const invalid = validatePlanInput(input);
     if (invalid) { setNotice({ type: "error", text: invalid }); return; }
 
-    setBusy(true); setNotice(null); setResult(null);
+    // 이전 결과를 지우지 않는다 — 세안 생성이 실패해도 약안이 화면에 남게.
+    setBusy(true); setNotice(null);
     try {
       const { data: { session: s } } = await supabase.auth.getSession();
       if (!s?.access_token) { setNotice({ type: "error", text: MESSAGES.unauthorized }); return; }
@@ -107,7 +111,8 @@ export default function LessonPlanPage() {
         setNotice({ type: "error", text: MESSAGES[data?.error] ?? data?.message ?? "만들지 못했어요." });
         return;
       }
-      setResult(data);
+      setResults((prev) => ({ ...prev, [data.planType]: data }));
+      setView(data.planType);
     } catch {
       setNotice({ type: "error", text: "연결이 끊겼어요. 잠시 뒤 다시 시도해 주세요." });
     } finally {
@@ -317,6 +322,18 @@ export default function LessonPlanPage() {
                 </p>
                 <button onClick={copyResult} className="text-xs font-bold text-[#0095da]">복사</button>
               </div>
+              {/* 약안·세안 둘 다 있으면 전환 탭 — 뽑은 약안이 사라지지 않고 오갈 수 있다. */}
+              {results.brief && results.full && (
+                <div className="mt-2 flex gap-1.5">
+                  {["brief", "full"].map((k) => (
+                    <button key={k} onClick={() => setView(k)}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-bold ${
+                        view === k ? "bg-[#0095da] text-white" : "bg-[#f2f6fa] text-[#0c4470]/70"}`}>
+                      {k === "brief" ? "약안" : "세안"}
+                    </button>
+                  ))}
+                </div>
+              )}
               {/* 잘린 결과를 완성본처럼 보여주지 않는다 — 실습 제출물이라
                   모르고 그대로 내면 사용자가 손해를 본다. */}
               {result.truncated && (
@@ -348,7 +365,8 @@ export default function LessonPlanPage() {
                   className="rounded-lg bg-[#f2f6fa] px-3 py-1.5 text-xs font-bold text-[#0c4470]/70">
                   📄 한글·워드(.doc)
                 </button>
-                {result.planType === "brief" && (
+                {/* 세안이 아직 없을 때만 제안 — 이미 뽑았으면 위 탭으로 오간다(중복 과금 방지). */}
+                {result.planType === "brief" && !results.full && (
                   <button
                     onClick={() => { setPlanType("full"); submit("full"); }}
                     disabled={busy}

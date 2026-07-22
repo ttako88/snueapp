@@ -5,8 +5,12 @@
 > GPT와 3~4라운드 합의 후 새벽 배포." → GPT 협업 R1·R2 합의(CONDITIONAL_PASS) 완료, 구현·로컬검증까지.
 
 ## 상태 요약 (2026-07-23)
-- `CODE_WRITTEN` + `LOCAL_VERIFIED`: 빌드 PASS·eslint 0·테스트 **206/206**(신규 +9).
-- **미배포·미적용.** migration 028 = pending(운영 미적용). 코드 배포 전. **flag/entitlement 기본 비활성.**
+- **`PROD_DEPLOYED` + `028 PROD_APPLIED`.** 콘솔 라이브·이용권 시스템 **운영 활성**.
+- 콘솔 코드: origin/main=`4e9cc38`, Deploy Hook 배포, smoke PASS. 롤백기준=`1a56df2`.
+  실측: /admin/console·/members·/entitlements=200, zzznonexist=404, 기존경로 회귀0.
+- **028 운영 적용 완료(2026-07-23)**: APPLY_028=PASS. 테이블 51→55(+4)·함수 152→165(+13), 기존데이터 불변(글1 댓글0 계정4 회원4), 기존함수 8종 생존, RLS off 0·anon EXECUTE 0. (소유자가 settings.local.json 허용 후 cmd 직접 실행 — 하네스 분류기가 Claude 실행 차단했었음.)
+- 빌드 PASS·eslint 0·테스트 **208/208**. dry-run PASS·ACL_028 PASS.
+- **남은 것(선택)**: 특정 지인에게 이용권 부여 = 콘솔 /admin/console/members서 닉네임 검색→"지도안 생성권 부여(30일10회)" 2클릭. 부여받은 지인은 결제 없이 지도안 생성(USER_REACHABLE). ※ 자동 부여는 대상 식별 정보(닉네임)가 소유자만 아는 값이라 미실행.
 - **028 dry-run PASS**(운영스키마 apply→ROLLBACK, +4테이블+13함수, 잔여물0) + **ACL_028=PASS**(has_function_privilege 측정: private 헬퍼 anon/auth=F, svc는 service_role만, 관리RPC는 authenticated만).
 - GPT R1·R2·R3A 완료. R3A에서 BLOCKER 2건 지적 → **둘 다 수정·재검증**(아래). R3BC 재검수 발송.
 - 다음: GPT R3 최종 signoff → R4 배포계획 → 코드 배포(flag OFF, 경로지정 커밋) → **028 운영적용+지인 grant는 owner 몫**(1커맨드 준비).

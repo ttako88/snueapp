@@ -101,14 +101,15 @@ export default function BoardListPage() {
           {posts.map((p) => (
             <li key={p.id}>
               <Link href={`/board/${slug}/${p.id}`} className="block rounded-xl bg-white p-3 shadow-sm active:bg-[#eaf6fd]">
-                <p className="line-clamp-2 font-medium text-[#0c4470]">
-                  {p.title}
-                  {commentCounts[p.id] > 0 && (
-                    <span className="ml-1.5 text-xs font-bold text-[#0095da]">[{commentCounts[p.id]}]</span>
-                  )}
-                </p>
-                <p className="mt-1 text-xs text-[#0c4470]/50">
-                  {authorLabel(p)} · {fmtDate(p.created_at)}
+                <p className="line-clamp-2 font-medium text-[#0c4470]">{p.title}</p>
+                <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-[#0c4470]/50">
+                  <span>{authorLabel(p)}</span>
+                  <span>·</span>
+                  <span>{fmtDate(p.created_at)}</span>
+                  {p.view_count > 0 && <span>· 조회 {p.view_count}</span>}
+                  {p.vote_count > 0 && <span className="font-bold text-[#0095da]">· 추천 {p.vote_count}</span>}
+                  {(() => { const c = commentCounts[p.id] ?? p.comment_count ?? 0;
+                    return c > 0 ? <span className="font-bold text-[#0c4470]/70">· 댓글 {c}</span> : null; })()}
                 </p>
               </Link>
             </li>

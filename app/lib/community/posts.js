@@ -15,7 +15,8 @@ export async function fetchBoardPosts(slug) {
   if (boardId === null) return unknownBoardResult();
   return supabase
     .from("posts")
-    .select("id, title, author_nickname, is_anonymous, created_at")
+    // 목록에서 클릭 없이 조회·추천·댓글 수를 보여줘 클릭을 유도한다(에타 형식).
+    .select("id, title, author_nickname, is_anonymous, created_at, view_count, vote_count, comment_count")
     .eq("board_id", boardId)
     .is("deleted_at", null)
     .order("id", { ascending: false });

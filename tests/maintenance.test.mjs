@@ -167,13 +167,15 @@ test("parseProjectRef / validateProjectRef", () => {
   assert.equal(validateProjectRef({ ...goodEnv, EXPECTED_PROJECT_REF_DEV: "x" }).ok, false);
 });
 
-test("job allowlist는 정확히 4종", () => {
+test("job allowlist는 정확히 5종", () => {
   assert.deepEqual([...JOB_NAMES].sort(), [
     "delete-accounts",
     "expire-uploads",
+    "prune-analytics",
     "purge-verification-docs",
     "stale-reviews",
   ]);
   assert.equal(isKnownJob("stale-reviews"), true);
+  assert.equal(isKnownJob("prune-analytics"), true);
   assert.equal(isKnownJob("../etc"), false);
 });

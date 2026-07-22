@@ -8,6 +8,7 @@ export const JOB_NAMES = [
   "delete-accounts",
   "expire-uploads",
   "stale-reviews",
+  "prune-analytics",
 ];
 export const isKnownJob = (job) => JOB_NAMES.includes(job);
 

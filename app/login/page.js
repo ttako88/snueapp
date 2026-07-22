@@ -145,11 +145,16 @@ export default function LoginPage() {
     });
     setBusy(false);
     if (error) {
+      if (!allowed) { setMsg({ type: "error", text: signUpBlockedMessage() }); return; }
+      // 메일 발송 한도(공용 메일 서비스)에 걸린 경우가 잦다 — 원인을 알 수 있게
+      // 구분해 안내한다. 한도면 잠시 뒤 재시도, 그 외면 일반 실패.
+      const m = String(error.message || "").toLowerCase();
+      const rateLimited = error.status === 429 || /rate limit|too many|exceeded/.test(m);
       setMsg({
         type: "error",
-        text: allowed
-          ? `메일 발송에 실패했어요 (${error.message})`
-          : signUpBlockedMessage(),
+        text: rateLimited
+          ? "지금 메일 요청이 많아 잠시 막혔어요. 1~2분 뒤 다시 시도해 주세요. (계속 안 되면 스팸함도 확인!)"
+          : "메일을 보내지 못했어요. 주소를 확인하고 잠시 뒤 다시 시도해 주세요.",
       });
       return;
     }
@@ -187,7 +192,7 @@ export default function LoginPage() {
             <p className="text-2xl">📬</p>
             <p className="mt-1 text-sm font-bold text-[#0c4470]">메일을 보냈어요!</p>
             <p className="mt-1 text-xs leading-relaxed text-[#0c4470]/55">
-              <b>{email}</b> 메일함에서 <b>"Sign in"(로그인) 링크</b>를 눌러주세요.
+              <b>{email}</b> 메일함에서 <b>&quot;Sign in&quot;(로그인) 링크</b>를 눌러주세요.
               지금 이 기기에서 열어야 이 브라우저로 로그인돼요. 메일이 안 보이면 스팸함도 확인!
             </p>
             {msg && <Msg msg={msg} />}

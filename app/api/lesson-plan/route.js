@@ -43,6 +43,19 @@ export async function POST(request) {
   const who = await requireUser(request, svc);
   if (who.error) return json({ error: who.error }, who.status);
 
+  // ⚠️ 지도안 생성은 소유자 지갑에서 실제 돈이 나간다. 로그인 개방(015) 후에는
+  //    아무나 로그인만 하면 예산을 소진할 수 있다. 그래서 공개(lessonPlanPublic)
+  //    전까지는 **owner 만** 생성한다. 개인별 한도(aiCreditCharge)가 켜지면 그때
+  //    이 flag 를 열어 인증회원에게 개방한다. 서버 게이트가 진짜 경계다.
+  if (!isEnabled("lessonPlanPublic")) {
+    let role = null;
+    try {
+      const { data } = await svc.rpc("svc_reviewer_role", { p_actor_id: who.userId });
+      role = data ?? null;
+    } catch { role = null; }
+    if (role !== "owner") return json({ error: "not_available_yet" }, 403);
+  }
+
   let body;
   try { body = await request.json(); }
   catch { return json({ error: "bad_request" }, 400); }

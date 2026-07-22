@@ -97,6 +97,53 @@ export const FEATURES = {
     requires: "supabase/migrations/pending/019_practicum_placement.sql 적용",
   },
 
+  // ── AI 지도안 공개 범위 ──
+  lessonPlanPublic: {
+    enabled: false,
+    label: "지도안 생성 일반 공개",
+    summary: "OFF면 owner 만 생성 가능(소유자 지갑 보호). ON이면 인증회원도 가능",
+    needsDb: false,
+    // ⚠️ 로그인 개방(015) 후 이 flag 가 OFF 면 owner 외 생성 차단(서버 게이트).
+    //    켜기 전 aiCreditCharge(개인별 SR 차감)로 남용·비용을 막아야 한다.
+    requires: "aiCreditCharge 활성(개인별 한도) — 안 켜고 공개하면 예산 소진 위험",
+  },
+
+  // ── 분석·수익화 (2026-07-22 goal, 전부 준비 후 flag 로 켠다) ──
+  hakbeonAutofill: {
+    enabled: false,
+    label: "학번 자동채움",
+    summary: "학생 인증 때 받은 학번으로 학년·학과·권장 시간표 초안 자동 로드",
+    needsDb: true,
+    // 파생 저장소·서버 재계산 경로가 있어야 한다. 클라 파생값은 신뢰하지 않는다.
+    requires: "024_analytics_consent.sql 적용 + finalize 라우트 학번 파생 저장",
+  },
+  productAnalytics: {
+    enabled: false,
+    label: "상세 이용통계 + 운영자 대시보드",
+    summary: "동의 회원의 가명 이용 이벤트 집계 + /admin/analytics 세그먼트 통계",
+    needsDb: true,
+    // ⚠️ 동의(product_analytics) 없는 회원은 카운터만. 사업자등록 불요.
+    requires: "024(동의·파생) + 025(usage_events) 적용 + /api/track + 대시보드",
+  },
+  ga4: {
+    enabled: false,
+    label: "GA4 방문 통계",
+    summary: "익명 방문·페이지뷰만. Consent Mode(기본 거부) + 학과·학년·학번 미전송",
+    needsDb: false,
+    // ⚠️ NEXT_PUBLIC_GA_MEASUREMENT_ID(소유자 등록) 없으면 켜도 no-op. CSP 에
+    //    googletagmanager.com 허용 필요(인프라). 처리방침·Play/App 라벨 일치 후 켠다.
+    requires: "NEXT_PUBLIC_GA_MEASUREMENT_ID + CSP 허용 + 처리방침 반영",
+  },
+  targetedAds: {
+    enabled: false,
+    label: "학과·학년 맞춤 스폰서 광고",
+    summary: "동의(18+) 회원에게 학과·학년 first-party 스폰서 슬롯. 미동의=일반광고",
+    needsDb: true,
+    // ⚠️ 전부 구현하되 사업자등록 전까지 OFF 휴면(소유자 지시). 켜기 전 GPT MUST·
+    //    사업자등록 확인 필요. 광고주엔 개인정보 미전송·집계만.
+    requires: "사업자등록 완료 + 광고 코드(S6) 배포 + GPT 활성 검수",
+  },
+
   // ── 계정 ──
   socialLogin: {
     enabled: false,

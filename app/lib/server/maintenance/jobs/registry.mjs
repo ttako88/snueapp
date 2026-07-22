@@ -8,6 +8,7 @@ import { staleReviews } from "./staleReviews.mjs";
 import { expireUploads } from "./expireUploads.mjs";
 import { purgeVerificationDocs } from "./purgeVerificationDocs.mjs";
 import { deleteAccounts } from "./deleteAccounts.mjs";
+import { pruneAnalytics } from "./pruneAnalytics.mjs";
 
 const STORAGE_BUCKET = "verification-docs"; // 고정 — DB RPC엔 버킷을 넘기지 않음
 const HANDLERS = {
@@ -15,6 +16,7 @@ const HANDLERS = {
   "expire-uploads": expireUploads,
   "purge-verification-docs": purgeVerificationDocs,
   "delete-accounts": deleteAccounts,
+  "prune-analytics": pruneAnalytics,
 };
 
 // batch_runs 기록. 성공하면 true, RPC 오류/예외면 false 반환(무엇을 할지는 호출측이 결정).

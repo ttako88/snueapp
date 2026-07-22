@@ -10,6 +10,9 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase/client";
 import { useAuth } from "../../lib/identity/useAuth";
+import { isEnabled } from "../../lib/features.js";
+import LessonPlanView from "../../components/LessonPlanView";
+import { downloadLessonPlan, printLessonPlan } from "../../lib/lessonExport";
 import {
   GRADES, subjectsForGrade, TEACHING_MODELS, PLAN_TYPES, DURATIONS,
   validatePlanInput, withDefaults, defaultModelFor, OPTIONAL_LIMITS,
@@ -17,6 +20,7 @@ import {
 
 const MESSAGES = {
   ai_not_configured: "지도안 생성 기능이 아직 준비 중이에요.",
+  not_available_yet: "지도안 생성은 아직 운영자에게만 열려 있어요. 곧 열어드릴게요.",
   daily_total_exceeded: "오늘 생성 한도를 다 썼어요. 내일 다시 시도해 주세요.",
   daily_user_exceeded: "오늘 내가 쓸 수 있는 만큼 다 썼어요. 내일 다시 만나요.",
   single_call_too_expensive: "요청이 너무 커요. 단원·주제를 짧게 적어주세요.",
@@ -30,7 +34,9 @@ const MESSAGES = {
 };
 
 export default function LessonPlanPage() {
-  const { session, loading: authLoading } = useAuth();
+  const { session, profile, loading: authLoading } = useAuth();
+  // 생성 가능 여부: 공개 flag 가 켜졌거나(모두) owner 본인. 서버가 최종 판정한다.
+  const canUse = isEnabled("lessonPlanPublic") || profile?.role === "owner";
   const [planType, setPlanType] = useState("brief");
   const [grade, setGrade] = useState(3);
   const [subject, setSubject] = useState("국어");
@@ -53,14 +59,17 @@ export default function LessonPlanPage() {
 
   useEffect(() => {
     let alive = true;
-    setUnitList([]);
-    // 학년·교과가 바뀌면 이전 단원은 무의미하다("5학년 국어" 단원을 "3학년
-    // 수학" 에 들고 가면 근거가 안 맞는다). 항상 비우고 새로 고르게 한다.
-    setUnit("");
-    fetch(`/api/lesson-plan/units?grade=${grade}&subject=${encodeURIComponent(subject)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (alive && Array.isArray(d?.units)) setUnitList(d.units); })
-      .catch(() => { /* 자유 입력으로 떨어진다 */ });
+    (async () => {
+      // 학년·교과가 바뀌면 이전 단원은 무의미하다("5학년 국어" 단원을 "3학년
+      // 수학" 에 들고 가면 근거가 안 맞는다). 항상 비우고 새로 고르게 한다.
+      setUnitList([]);
+      setUnit("");
+      try {
+        const r = await fetch(`/api/lesson-plan/units?grade=${grade}&subject=${encodeURIComponent(subject)}`);
+        const d = r.ok ? await r.json() : null;
+        if (alive && Array.isArray(d?.units)) setUnitList(d.units);
+      } catch { /* 자유 입력으로 떨어진다 */ }
+    })();
     return () => { alive = false; };
   }, [grade, subject]);
 
@@ -75,8 +84,9 @@ export default function LessonPlanPage() {
     if (!subjectsForGrade(g).includes(subject)) setSubject(subjectsForGrade(g)[0]);
   }
 
-  async function submit() {
-    const input = withDefaults({ planType, grade, subject, unit, duration, model, ...opt });
+  async function submit(planTypeOverride) {
+    const pt = planTypeOverride || planType;
+    const input = withDefaults({ planType: pt, grade, subject, unit, duration, model, ...opt });
     const invalid = validatePlanInput(input);
     if (invalid) { setNotice({ type: "error", text: invalid }); return; }
 
@@ -130,7 +140,17 @@ export default function LessonPlanPage() {
         </div>
       )}
 
-      {session && (
+      {session && !canUse && (
+        <div className="rounded-2xl border border-dashed border-[#0095da]/30 bg-white p-5 text-center">
+          <p className="text-2xl">🛠️</p>
+          <p className="mt-1 text-sm font-bold text-[#0c4470]">지도안 생성은 준비 중이에요</p>
+          <p className="mt-1 text-xs leading-relaxed text-[#0c4470]/50">
+            지금은 운영자만 쓸 수 있어요. 곧 모두에게 열어드릴게요.
+          </p>
+        </div>
+      )}
+
+      {session && canUse && (
         <>
           <section className="rounded-2xl bg-white p-4 shadow-sm">
             <p className="text-xs font-bold text-[#0c4470]/40">무엇을 만들까요</p>
@@ -303,9 +323,35 @@ export default function LessonPlanPage() {
                   직접 확인해 주세요. 그대로 제출하면 실습 평가에 불리할 수 있어요.
                 </p>
               </div>
-              <pre className="mt-2 max-h-[60vh] overflow-auto whitespace-pre-wrap break-words text-[13px] leading-relaxed text-[#0c4470]">
-                {result.text}
-              </pre>
+
+              {/* 내보내기 · 세안 만들기 */}
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <button
+                  onClick={() => printLessonPlan(result.text,
+                    `${PLAN_TYPES.find((t) => t.key === result.planType)?.label ?? "지도안"} 초안`)}
+                  className="rounded-lg bg-[#f2f6fa] px-3 py-1.5 text-xs font-bold text-[#0c4470]/70">
+                  🖨️ PDF·인쇄
+                </button>
+                <button
+                  onClick={() => downloadLessonPlan(result.text,
+                    `수업지도안_${result.planType === "full" ? "세안" : "약안"}.doc`)}
+                  className="rounded-lg bg-[#f2f6fa] px-3 py-1.5 text-xs font-bold text-[#0c4470]/70">
+                  📄 한글·워드(.doc)
+                </button>
+                {result.planType === "brief" && (
+                  <button
+                    onClick={() => { setPlanType("full"); submit("full"); }}
+                    disabled={busy}
+                    className="rounded-lg bg-[#0095da] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-40">
+                    ✨ 이 약안으로 세안 만들기
+                  </button>
+                )}
+              </div>
+
+              {/* 약안·세안 폼으로 렌더 — 캡처해서 바로 쓸 수 있게 */}
+              <div className="mt-2 max-h-[60vh] overflow-auto rounded-xl border border-black/5 bg-white p-3">
+                <LessonPlanView text={result.text} />
+              </div>
             </section>
           )}
         </>

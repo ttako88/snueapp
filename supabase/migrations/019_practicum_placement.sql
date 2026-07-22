@@ -157,12 +157,16 @@ grant execute on function public.can_post_practicum(text, text) to authenticated
 
 -- ------------------------------------------------------------
 -- 5. 학교·학기별 참여 인원 (읽기 가치 판단용)
---    누가 있는지는 안 준다. 몇 명인지만.
+--    누가 있는지는 안 준다. 몇 명인지만 — 그것도 **3명 미만은 정확 수를
+--    노출하지 않는다**(GPT 019 MUST: 소수 학교의 정확 인원 노출 금지). 1~2명
+--    학교는 "<3" 으로 익명화한다. k=3 미만은 특정 개인을 지목할 위험이 크다.
 -- ------------------------------------------------------------
 create or replace function public.practicum_school_counts(p_semester text)
 returns jsonb language sql stable security definer set search_path = '' as $$
-  select coalesce(jsonb_object_agg(school_short, n), '{}'::jsonb)
-    from (select school_short, count(*) n
+  select coalesce(jsonb_object_agg(
+           school_short,
+           case when n >= 3 then to_jsonb(n) else to_jsonb('<3'::text) end), '{}'::jsonb)
+    from (select school_short, count(*)::int n
             from private.practicum_placements
            where semester = p_semester
            group by school_short) t;

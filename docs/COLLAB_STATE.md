@@ -113,25 +113,27 @@ GPT 판정(P-20260722-ONE_SHOT_BOOTSTRAP_COMPLETENESS_REVIEW_01)은 다음이었
 | §9 배치 4종 | `CODE_WRITTEN` (기존 구현) | MEASURED (RPC 12종 존재) | Cron 미활성 |
 | Cron | **비활성 (유지)** | — | 활성화는 소유자 승인 |
 
-### pending 마이그레이션 (2026-07-22 야간 갱신)
+### pending 마이그레이션 (2026-07-22 goal 실행 갱신)
 
-누적 dry-run **PASS 7/7**, 롤백 후 운영 스키마 37/118/20/17 로 적용 전과 동일함을
-실측했다. **전부 `APPLICATION AUTHORITY = NONE`** — 적용은 소유자 승인 후.
+> **goal 실행 진행중 (2026-07-22).** GPT 검수 후 하나씩 적용중. 상세·진행원장은
+> `docs/GOAL_MODE_WORKORDER_2026-07-22.md`. 배포는 push→Vercel 자동.
+> **운영 배포 SHA: 9fa001d → e6923dc (2026-07-22, 016·020 적용 + 새 finalize 라우트).**
+> 롤백 기준 origin/main = `9fa001d`.
 
 | 파일 | 상태 | 증거 | 비고 |
 |---|---|---|---|
-| 015 도메인 폐기 | `SQL_DRAFTED` | dry-run PASS | 낮에만. 야간 수정 금지 |
-| 016 강의평가 쓰기·조회 | `SQL_DRAFTED` + `DRY_RUN_VERIFIED` | 함수 +4 | **통계 결함 수정 포함**(아래) |
-| 019 실습학교 배정 | `SQL_DRAFTED` + `DRY_RUN_VERIFIED` | 테이블 +1 함수 +8 | 화면 있음, flag OFF |
-| 020 finalize claim | `SQL_DRAFTED` + `DRY_RUN_VERIFIED` | 테이블 +1 함수 +10 | ⚠️ **라우트가 이미 의존한다** |
-| 021 고아 탐지 RPC | `SQL_DRAFTED` + `DRY_RUN_VERIFIED` | 함수 +12 | 읽기 전용. 삭제 함수 없음 |
-| 022 화폐 분리 | `SQL_DRAFTED` + `DRY_RUN_VERIFIED` | 함수 +13 트리거 +1 | 유료 기능 0개인 지금이 최적기 |
-| 023 AI SR 차감 | `SQL_DRAFTED` + `DRY_RUN_VERIFIED` | 테이블 +2 함수 +15 | **022 뒤에** 적용. flag OFF |
+| 015 도메인 폐기 | `SQL_DRAFTED` (미적용) | dry-run PASS | **F항목 — 낮·소유자 입회.** HELD |
+| 016 강의평가 쓰기·조회 | **✅ 적용 (PROD)** | GPT rev2 PASS, APPLY_016=PASS 함수+4 | 통계 분모수정. **flag OFF**(활성화 전 차분공격 snapshot 선행) |
+| 019 실습학교 배정 | **✅ 적용 (PROD)** | GPT PASS, APPLY_019=PASS 테이블+1 함수+4 | k-익명 반영. **practicumPlacement OFF**(posting 활성화는 atomic post gate·게시판층 제한 후) |
+| 020 finalize claim | **✅ 적용+배포 (PROD)** | GPT rev3 PASS, APPLY_020=PASS 함수+3, smoke PASS | **token-fenced**. 레거시 RPC(svc_set_verification_storage_path·finalize_verification) service_role 회수. 동시성 라이브 실측은 이연(N3) |
+| 021 고아 탐지 RPC | **✅ 적용 (PROD)** | GPT PASS, APPLY_021=PASS 함수+2 | 읽기전용. svc_verification_object_status(path_matches). 탐지도구 5분류 재작성. 삭제도구는 별도 |
+| 022 화폐 분리 | **✅ 적용 (PROD)** | GPT PASS, APPLY_022=PASS 함수+1 트리거+1 | guard PUBLIC EXECUTE→revoke 교정. 기존행 currency='free' |
+| 023 AI SR 차감 | **✅ 적용 (PROD)** | GPT PASS, APPLY_023=PASS 테이블+1 함수+2 | **aiCreditCharge OFF**(활성화는 durable 상태기계+AI키). 차감코드 e6923dc 휴면 배포 |
 
-> ⚠️ **020 은 배포 순서가 걸려 있다.** `/api/verification/finalize` 가
-> `svc_claim_verification_finalize` 를 호출하도록 이미 고쳐져 있다.
-> **마이그레이션 → 배포** 순서를 어기면 학생 인증 제출이 전부 실패한다.
-> (2026-07-22 시점 커밋·배포 안 함. 작업 트리에만 있음.)
+> ✅ **A~E DB 전부 적용 완료(2026-07-22 goal 실행).** A(020)는 배포까지.
+> 020 은 적용→배포 순서 지킴(레거시 회수로 짧은 다운타임, 배포로 닫힘).
+> **모든 flag OFF**(courseReview·aiCreditCharge·practicumPlacement) — 각 활성화 GPT 차단(선행조건 있음).
+> 운영 함수 118→134(+16). 데이터 불변, anon EXECUTE 0, RLS 정상.
 
 > 023 은 022 의 `currency` 컬럼을 쓴다. **022 → 023** 순서 필수.
 

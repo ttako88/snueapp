@@ -151,15 +151,21 @@
 | 항목 | GPT검수 | 적용 | 배포 | 검증 | 상태 |
 |---|---|---|---|---|---|
 | Phase0 지반측정 | — | — | — | — | **PROD_VERIFIED** (dryrun 7/7 PASS, 기준 37/118/20/17, 잔여물0) |
-| A 020 + 배포 | rev3 **CONDITIONAL_PASS** (추가검수 NO) | **적용대기** | **배포대기** | 로컬완료 | rev3=원자적 svc_finalize_verified 승인. MUST 반영완료: MUST1 레거시 회수(svc_set_verification_storage_path·finalize_verification from service_role), MUST2 post-check+RAISE, MUST3 라우트 staging검사(+적용전 측정). 164 PASS·dry-run 6/6 PASS·**빌드 0경고**. → **적용+배포 인가**(GPT ADDITIONAL_PRE_REVIEW=NO). 다음: 배포경로검증→MUST3측정→적용→게이트→커밋push→smoke |
+| A 020 + 배포 | rev3 CONDITIONAL_PASS | ✅적용(함수+3=125,레거시회수) | ✅배포 e6923dc | **PROD_VERIFIED** | smoke PASS: 홈200·maintenance200·units200·finalize무인증→401(500아님=정상). 새 token-fenced 라우트 live, 다운타임 종료. 남은것: 동시성 실측(defect1, synthetic). 롤백기준 origin/main=9fa001d |
 | B 016 | rev2 GO_AFTER_MUST_01 | **✅적용** | (불요) | **PROD_VERIFIED** | rev2+MUST_01(trend_n null) 반영, GPT 승인. 운영 적용 APPLY_016=PASS(함수+4=122, 데이터불변, RLS/anon 정상). flag OFF. MUST7 항목별(n=9,10) 공개검증은 데이터·활성화 시(synthetic). 활성화 전 차분공격 snapshot 선행. |
-| D 021 | 대기 | 대기 | (불요) | 대기 | 대기 |
-| E 022→023 +flag | 대기 | 대기 | (C와 일괄) | 대기 | 대기 |
-| C 019 +flag | 대기 | 대기 | 대기 | 대기 | 대기 |
-| F 015 | — | — | — | — | 소유자 입회 대기 |
-| 결함1 재현 | — | — | — | — | 소유자 확인 후 |
-| 결함2 통계 | — | — | — | — | 016 후 |
+| D 021 | CONDITIONAL_PASS→MUST반영 | **✅적용** APPLY_021=PASS(함수+2=127) | (불요) | PROD_VERIFIED(DB) | MUST 반영: svc_verification_object_status(path_matches 불리언만·경로/token 비노출·bad_id→INVALID_PATH). 탐지도구 5분류(ORPHAN/INVALID/UNKNOWN/RETAIN/GRACE)·token구조 순회·삭제 미import 재작성(문법OK, 런타임 NOT_VERIFIED=수동). 삭제도구는 별도packet. |
+| E 022→023 | 022 CP / 023 DB CP | **✅적용** 022(함수+1트리거+1)·023(테이블+1함수+2) | (flag OFF) | PROD_VERIFIED(DB) | 022 사후검증이 guard_ledger_currency PUBLIC EXECUTE 잡음→revoke 교정(anon EXECUTE 0 복구). 023 PASS. unlock_subject도 members 잠금 확인. **flag aiCreditCharge OFF 유지** — 활성화는 durable 상태기계(CHARGED/GENERATING/DELIVERABLE_COMMITTED/REFUNDED)+AI키 뒤(GPT 활성화 BLOCKER, held). 차감코드는 e6923dc에 휴면 배포됨 |
+| C 019 | CONDITIONAL_PASS | **✅적용** APPLY_019=PASS(테이블+1함수+4) | (flag OFF) | PROD_VERIFIED(DB) | k-익명(3명미만 "<3") 반영 적용. flag ON은 placement UI만 인가(단 posting 활성화는 atomic post gate·게시판층 제한 전까지 NO). **practicumPlacement OFF 유지**(flag가 게시판 진입도 여는지 확인+게시판층 MUST 후 ON). UI "인증" 표시 금지. |
+| F 015 | — | — | — | — | **HELD** — 소유자 입회 시 |
+| 결함1 020동시성 | — | — | — | 코드검증완료 | GPT rev3 검증+배포+smoke PASS. 라이브 동시성 재현은 **커밋 합성 verification_requests/auth.users(N3 보호데이터) 필요→이연**(dev 또는 소유자 입회). 코드는 검증됨 |
+| 결함2 016통계 | — | — | — | 로직검증완료 | GPT rev2 검증+적용. n=0,9,10 출력 실측은 합성 리뷰 필요(courseReview OFF)→이연 |
 | Phase4 로컬GPT | — | — | — | — | 데이터 도착 대기 |
+
+## ★ goal 실행 결과 요약 (2026-07-22)
+**A~E DB 전부 운영 적용 완료.** A(020)는 배포까지(9fa001d→e6923dc, smoke PASS).
+GPT 검수가 적용 전 결함 다수 차단: 016(0응답키·저분모·차분공격), 020(TTL·원자성·레거시우회 BLOCKER 3), 021(경로/token누출), 022(guard PUBLIC EXECUTE), 019(k-익명·인증표시).
+**모든 flag OFF**(courseReview·aiCreditCharge·practicumPlacement) — GPT가 각 활성화를 정당한 이유로 차단(차분공격 snapshot / SR-timeout durable상태기계 / atomic post gate). 활성화는 각 선행조건 + (AI는 소유자 키) 후.
+운영 함수 총 118→134(+16). 데이터 불변, anon EXECUTE 0, RLS 정상 유지.
 
 > **배포 전 직전 origin/main SHA = `9fa001d0bf8eb368ad8ca3b46d1614a855611578`**
 > (2026-07-22 Phase0 실측, main==origin/main). 배포 롤백 기준점.

@@ -40,22 +40,31 @@ revoke execute on function public.svc_count_open_uploads(uuid)
 grant  execute on function public.svc_count_open_uploads(uuid) to service_role;
 
 -- ------------------------------------------------------------
--- 2. 이 신청이 존재하는가 / 파기됐는가
---    verified/<request_id>/ 판정용.
+-- 2. 이 객체 경로가 현재 정본과 일치하는가 (verified/<id>/<token>/document 판정용)
 --
---    p_request_id 를 text 로 받는 이유: bigint 를 JS Number 로 다루면
---    정밀도를 잃는다. 라우트들이 이미 문자열로 넘기는 규칙을 쓰고 있다.
---    형식이 어긋나면 예외 대신 exists=false 로 답한다 — 폴더 이름이
---    이상한 것도 정리 대상이기 때문이다.
+--    ★ GPT 021 MUST: 정본 경로·token 자체를 **반환하지 않는다.** 탐지기가 이미
+--      찾은 객체 경로를 넘기면, DB 는 그 경로가 현재 정본과 같은지(path_matches)만
+--      돌려준다(최소 권한). 020 token-fence 는 정본을 verified/<id>/<token>/document
+--      에 두므로, 재인수·실패한 stale 작업자의 업로드는 **패배 token 경로**로 남는다.
+--      그 판정 = exists=true + path_matches=false (신청은 있는데 이 경로는 정본 아님).
+--
+--    p_request_id 를 text 로 받는 이유: bigint 를 JS Number 로 다루면 정밀도를
+--    잃는다. 형식이 어긋나거나 bigint 범위를 넘으면 bad_id 로 답한다
+--    (탐지기가 INVALID_PATH 로 분류한다 — 고아로 오인하지 않는다).
 -- ------------------------------------------------------------
-create or replace function public.svc_verification_request_exists(p_request_id text)
+create or replace function public.svc_verification_object_status(
+  p_request_id text, p_object_path text)
 returns jsonb language plpgsql security definer set search_path = '' stable as $$
 declare v_id bigint; r record;
 begin
   if p_request_id !~ '^[1-9][0-9]*$' then
     return jsonb_build_object('exists', false, 'reason', 'bad_id');
   end if;
-  v_id := p_request_id::bigint;
+  begin
+    v_id := p_request_id::bigint;   -- overflow 도 bad_id 로 (INVALID_PATH)
+  exception when others then
+    return jsonb_build_object('exists', false, 'reason', 'bad_id');
+  end;
 
   select status, purged_at, storage_path into r
     from private.verification_requests where id = v_id;
@@ -66,14 +75,13 @@ begin
   return jsonb_build_object(
     'exists', true,
     'purged', (r.purged_at is not null),
-    -- DB 가 이 신청에 대해 파일이 있다고 보는지. false 인데 객체가 있으면
-    -- 그것도 고아다.
-    'has_path', (r.storage_path is not null),
-    'status', r.status);
+    'status', r.status,
+    -- 경로·token 자체는 안 준다. 넘겨받은 경로가 현재 정본과 같은지만.
+    'path_matches', (r.storage_path is not null and r.storage_path = p_object_path));
 end $$;
-revoke execute on function public.svc_verification_request_exists(text)
+revoke execute on function public.svc_verification_object_status(text, text)
   from public, anon, authenticated;
-grant  execute on function public.svc_verification_request_exists(text) to service_role;
+grant  execute on function public.svc_verification_object_status(text, text) to service_role;
 
 commit;
 

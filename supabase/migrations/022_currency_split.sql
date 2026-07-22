@@ -63,6 +63,10 @@ begin
   return new;
 end $$;
 
+-- 트리거 함수는 트리거만 부른다. 기본 PUBLIC EXECUTE 를 회수해 "anon EXECUTE 0"
+-- 불변식을 지킨다(사후검증이 잡았다 — private 스키마라 도달성은 낮지만 규율).
+revoke execute on function private.guard_ledger_currency() from public, anon, authenticated;
+
 drop trigger if exists ticket_ledger_currency_guard on private.ticket_ledger;
 create trigger ticket_ledger_currency_guard
   before insert on private.ticket_ledger

@@ -22,7 +22,7 @@
  * (재학증명서·학생증)이 맡는다. 도메인 제한은 학교 메일을 안 쓰는 재학생을
  * 배제하고 증명력도 약하다.
  */
-export const OPEN_SIGNUP = false;
+export const OPEN_SIGNUP = true;
 
 /** 비밀번호 가입 경로를 여는가. 지금은 메일 링크(OTP)만 쓴다. */
 export const ALLOW_PASSWORD_SIGNUP = false;

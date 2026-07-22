@@ -183,8 +183,8 @@ begin
   return jsonb_build_object('event', p_event, 'week_start', v_start, 'week_end', v_end,
                             'segments', v_rows, 'finalized', true);
 end $$;
-revoke execute on function public.analytics_event_segments(text, int) from public, anon, authenticated;
-grant execute on function public.analytics_event_segments(text, int) to authenticated;
+revoke execute on function public.analytics_event_segments(text) from public, anon, authenticated;
+grant execute on function public.analytics_event_segments(text) to authenticated;
 
 -- ------------------------------------------------------------
 -- 4. 일별 총량(시계열) — 집계치. 개인 아님.
@@ -196,20 +196,20 @@ begin
   perform private.actor_role_check('operator');
   perform private.audit_analytics_view('daily:' || coalesce(p_event,''));
 
-  select coalesce(jsonb_agg(jsonb_build_object('day', day, 'n', n) order by day), '[]'::jsonb)
+  select coalesce(jsonb_agg(jsonb_build_object('day', d, 'n', n) order by d), '[]'::jsonb)
     into v_rows
     from (
-      select day, sum(n)::bigint n from (
-        select event_day day, sum(cnt)::bigint n
+      select d, sum(n)::bigint n from (
+        select event_day as d, sum(cnt)::bigint n
           from private.usage_counters
          where event_name = p_event and event_day >= (now() at time zone 'Asia/Seoul')::date - v_days
          group by event_day
         union all
-        select (occurred_at at time zone 'Asia/Seoul')::date day, count(*)::bigint n
+        select (occurred_at at time zone 'Asia/Seoul')::date as d, count(*)::bigint n
           from private.usage_events
          where event_name = p_event and occurred_at >= now() - (v_days || ' days')::interval
          group by (occurred_at at time zone 'Asia/Seoul')::date
-      ) s group by day
+      ) s group by d
     ) t;
 
   return jsonb_build_object('event', p_event, 'days', v_days, 'daily', v_rows);

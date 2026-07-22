@@ -8,8 +8,10 @@ import { useEffect, useState } from "react";
 import { useAuth } from "../../../lib/identity/useAuth";
 import {
   adminListMembers, adminMemberDetail, grantEntitlement, revokeEntitlement, roleHasPerm,
-  isNotActivated,
+  isNotActivated, setMemberRole, deleteMember,
 } from "../../../lib/community/adminConsole";
+
+const ROLE_LABEL = { member: "일반", moderator: "모더레이터", operator: "운영자", owner: "오너" };
 
 const STATUS_LABEL = {
   pending: "대기", submitted: "심사중", verified: "인증", rejected: "반려",
@@ -97,14 +99,14 @@ export default function MembersPage() {
       </div>
 
       {selected && (
-        <MemberDetail memberId={selected} canManageCost={canManageCost}
+        <MemberDetail memberId={selected} canManageCost={canManageCost} isOwner={role === "owner"}
           onClose={() => setSelected(null)} onChanged={() => setReloadTick((t) => t + 1)} />
       )}
     </div>
   );
 }
 
-function MemberDetail({ memberId, canManageCost, onClose, onChanged }) {
+function MemberDetail({ memberId, canManageCost, isOwner, onClose, onChanged }) {
   const [detail, setDetail] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -128,6 +130,11 @@ function MemberDetail({ memberId, canManageCost, onClose, onChanged }) {
 
   const refresh = () => { setDetailTick((t) => t + 1); onChanged?.(); };
 
+  const DEL_ERR = {
+    forbidden: "삭제 권한이 없어요(오너만).", cannot_delete_self: "본인 계정은 지울 수 없어요.",
+    cannot_delete_staff: "운영진 계정은 이 도구로 지울 수 없어요.", reason_required: "사유를 적어주세요.",
+  };
+
   const confirmPending = async () => {
     const r = reason.trim();
     if (!r || !pending) return;
@@ -141,11 +148,20 @@ function MemberDetail({ memberId, canManageCost, onClose, onChanged }) {
         quota: p.grantType === "quota" ? p.quota : null,
         expiresAt: p.grantType === "quota" ? expiresAt : null, reason: r,
       }));
-    } else {
+    } else if (p.kind === "revoke") {
       ({ error: err } = await revokeEntitlement({ grantId: p.grantId, reason: r }));
+    } else if (p.kind === "role") {
+      ({ error: err } = await setMemberRole({ memberId, role: p.role, reason: r }));
+    } else if (p.kind === "delete") {
+      ({ error: err } = await deleteMember({ memberId, reason: r }));
+      setBusy(false);
+      if (err) { setError(DEL_ERR[err.message] || "삭제하지 못했어요."); return; }
+      // 계정이 사라졌다 — 상세를 닫고 목록을 새로고침.
+      setPending(null); setReason(""); onChanged?.(); onClose?.();
+      return;
     }
     setBusy(false);
-    if (err) { setError(err.message || (p.kind === "grant" ? "부여 실패" : "회수 실패")); return; }
+    if (err) { setError(err.message || "처리하지 못했어요."); return; }
     setPending(null); setReason("");
     refresh();
   };
@@ -234,6 +250,36 @@ function MemberDetail({ memberId, canManageCost, onClose, onChanged }) {
               </div>
             )}
 
+            {/* 역할(권한) 변경 — 오너만. grant_role 이 DB 에서 재검사·마지막 오너 보호. */}
+            {isOwner && detail.role !== "owner" && (
+              <div className="mt-3 rounded-xl bg-[#f2f6fa] p-3">
+                <p className="text-xs font-bold text-[#0c4470]">권한 부여 · 변경</p>
+                <p className="mt-0.5 text-[11px] text-[#0c4470]/55">현재: <b>{ROLE_LABEL[detail.role] ?? detail.role}</b>. 믿을 만한 지인에게 운영 권한을 줄 수 있어요.</p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {["operator", "moderator", "member"].filter((rk) => rk !== detail.role).map((rk) => (
+                    <button key={rk} disabled={busy}
+                      onClick={() => { setReason(""); setPending({ kind: "role", role: rk, title: `권한을 '${ROLE_LABEL[rk]}'(으)로 변경` }); }}
+                      className="rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-[#0c4470]/80 disabled:opacity-50">
+                      {ROLE_LABEL[rk]}(으)로
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 계정 삭제 — 오너만, 비가역. 운영진·본인은 서버가 거부. */}
+            {isOwner && detail.role !== "owner" && (
+              <div className="mt-3 rounded-xl border border-[#d05b6a]/30 bg-[#fdf3f4] p-3">
+                <p className="text-xs font-bold text-[#c0392b]">계정 삭제 (되돌릴 수 없음)</p>
+                <p className="mt-0.5 text-[11px] text-[#0c4470]/55">테스트·깡통 계정 정리용. 이 회원의 계정과 데이터가 영구 삭제되고 아이디·학번이 풀려요.</p>
+                <button disabled={busy}
+                  onClick={() => { setReason(""); setPending({ kind: "delete", danger: true, title: `${detail.nickname || "이 회원"} 계정 삭제` }); }}
+                  className="mt-2 rounded-lg bg-[#c0392b] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">
+                  계정 삭제
+                </button>
+              </div>
+            )}
+
             {/* 사유 입력 패널 — window.prompt 대체(모바일/웹뷰 호환). */}
             {pending && (
               <div className="mt-3 rounded-xl border border-[#0095da]/30 bg-white p-3">
@@ -245,8 +291,8 @@ function MemberDetail({ memberId, canManageCost, onClose, onChanged }) {
                   className="mt-2 w-full rounded-lg bg-[#f2f6fa] px-3 py-2 text-sm text-[#0c4470] outline-none" />
                 <div className="mt-2 flex gap-1.5">
                   <button disabled={busy || !reason.trim()} onClick={confirmPending}
-                    className="rounded-lg bg-[#0095da] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-40">
-                    확인
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold text-white disabled:opacity-40 ${pending.danger ? "bg-[#c0392b]" : "bg-[#0095da]"}`}>
+                    {pending.danger ? "삭제 확인" : "확인"}
                   </button>
                   <button disabled={busy} onClick={() => { setPending(null); setReason(""); }}
                     className="rounded-lg bg-[#f2f6fa] px-3 py-1.5 text-xs font-bold text-[#0c4470]/60">

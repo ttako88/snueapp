@@ -85,3 +85,28 @@ export async function revokeEntitlement({ grantId, reason }) {
   if (!supabase) return NO;
   return supabase.rpc("revoke_entitlement", { p_grant_id: grantId, p_reason: reason });
 }
+
+/** 역할 부여/변경 — owner 만(grant_role 이 DB 에서 재검사·마지막 owner 보호). reason 필수. */
+export async function setMemberRole({ memberId, role, reason }) {
+  if (!supabase) return NO;
+  return supabase.rpc("grant_role", { p_member_id: memberId, p_role: role, p_reason: reason });
+}
+
+/** 계정 강제 삭제 — owner 전용 서버 라우트(비가역). reason 필수. */
+export async function deleteMember({ memberId, reason }) {
+  if (!supabase) return { error: { message: "unavailable" } };
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) return { error: { message: "unauthorized" } };
+  let res, data;
+  try {
+    res = await fetch("/api/admin/members/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ memberId, reason }),
+    });
+    data = await res.json().catch(() => null);
+  } catch { return { error: { message: "network" } }; }
+  if (!res.ok || data?.ok !== true) return { error: { message: data?.error || "delete_failed" } };
+  return { data: { ok: true } };
+}

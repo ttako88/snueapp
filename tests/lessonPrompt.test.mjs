@@ -90,6 +90,43 @@ test("단원이 안 맞으면 근거를 안 끼운다", () => {
   assert.equal(buildLessonPrompt(base, { data }).hasEvidence, false);
 });
 
+test("교과서ID를 고르면 같은 단원의 다른 책 차시·코드를 섞지 않는다", () => {
+  const bookA = "mirae-2022-integrated-1-1-1386";
+  const bookB = "mirae-2022-integrated-1-1-1380";
+  const input = { ...base, grade: 1, subject: "통합", unit: "함께 준비해요", textbookId: bookA, model: "play" };
+  const data = {
+    empty: false,
+    units: [
+      { subject: "통합", grade: 1, term: 1, unitNo: 2, unit: "함께 준비해요", totalPeriods: 12,
+        periodNo: 1, period: "학교 책의 차시", codes: ["[2통01-01]"], publisher: "미래엔", textbookId: bookA },
+      { subject: "통합", grade: 1, term: 1, unitNo: 2, unit: "함께 준비해요", totalPeriods: 20,
+        periodNo: 1, period: "봄 책의 차시", codes: ["[2통02-01]"], publisher: "미래엔", textbookId: bookB },
+    ],
+    standards: new Map([
+      ["[2통01-01]", { code: "[2통01-01]", text: "학교 책 성취기준", subject: "통합" }],
+      ["[2통02-01]", { code: "[2통02-01]", text: "봄 책 성취기준", subject: "통합" }],
+    ]),
+    rubrics: new Map(), modelSteps: new Map(),
+  };
+  const built = buildLessonPrompt(input, { data });
+  assert.match(built.prompt, /학교 책의 차시/);
+  assert.doesNotMatch(built.prompt, /봄 책의 차시|\[2통02-01\]/);
+});
+
+test("여러 교과서가 걸린 통합 자유입력은 근거를 섞지 않는다", () => {
+  const input = { ...base, grade: 1, subject: "통합", unit: "함께 준비해요", model: "play" };
+  const data = {
+    empty: false,
+    units: [
+      { subject: "통합", grade: 1, unit: "함께 준비해요", periodNo: 1, period: "A", codes: ["[2통01-01]"], textbookId: "mirae-2022-integrated-1-1-1386" },
+      { subject: "통합", grade: 1, unit: "함께 준비해요", periodNo: 1, period: "B", codes: ["[2통02-01]"], textbookId: "mirae-2022-integrated-1-1-1380" },
+    ], standards: new Map(), rubrics: new Map(), modelSteps: new Map(),
+  };
+  const built = buildLessonPrompt(input, { data });
+  assert.equal(built.hasEvidence, false);
+  assert.doesNotMatch(built.prompt, /교과서 단원 정보/);
+});
+
 test("알 수 없는 planType·model 은 던진다", () => {
   assert.throws(() => buildLessonPrompt({ ...base, planType: "없음" }));
   assert.throws(() => buildLessonPrompt({ ...base, model: "없음" }));

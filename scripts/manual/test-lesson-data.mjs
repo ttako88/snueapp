@@ -138,6 +138,26 @@ check("단원명 번호·차시초과·중복이 걸러진다", u.rows.length ==
   `rows=${u.rows.length} (정상 1행만 남아야 한다)`);
 check("살아남은 건 정상 행", u.rows[0]?.period === "정상 차시", `period=${u.rows[0]?.period}`);
 
+// v2 교과서ID는 같은 단원·차시라도 서로 다른 책이면 함께 허용한다.
+clear();
+put("단원구성.csv", [
+  "교과,학년,학기,단원번호,단원명,총차시,차시번호,차시명,성취기준코드,출판사,교과서ID",
+  "통합,1,1,2,함께 준비해요,12,1,학교 책 차시,,미래엔,mirae-2022-integrated-1-1-1386",
+  "통합,1,1,2,함께 준비해요,20,1,봄 책 차시,,미래엔,mirae-2022-integrated-1-1-1380",
+].join("\n"));
+u = loadUnits(null);
+check("서로 다른 교과서ID의 같은 차시는 함께 읽는다", u.rows.length === 2, `rows=${u.rows.length}`);
+check("교과서ID가 객체에 보존된다", u.rows[0]?.textbookId === "mirae-2022-integrated-1-1-1386");
+
+// 기존 v1 헤더도 하위 호환으로 읽는다. ID는 빈 문자열이어야 한다.
+clear();
+put("단원구성.csv", [
+  "교과,학년,학기,단원번호,단원명,총차시,차시번호,차시명,성취기준코드,출판사",
+  "국어,5,1,4,글쓴이의 주장,8,1,주장하는 글 살펴보기,,국정",
+].join("\n"));
+u = loadUnits(null);
+check("v1 헤더도 계속 읽는다", u.rows.length === 1 && u.rows[0].textbookId === "");
+
 // ── 평가기준 ────────────────────────────────────────────────
 console.log("\n평가기준");
 clear();

@@ -127,23 +127,32 @@ export function buildEvidence(v, data) {
   const nv = norm(v.unit);
   const units = (data.units ?? []).filter((u) => {
     if (u.subject !== v.subject || u.grade !== Number(v.grade)) return false;
+    // 여러 교과서가 있는 데이터에서 ID를 골랐다면 그 책의 행만 쓴다.
+    // ID 없이 자유 입력했을 때도 서로 다른 책의 차시·코드를 합치지 않는다.
+    const requestedTextbookId = String(v.textbookId ?? "").trim();
+    if (requestedTextbookId && u.textbookId !== requestedTextbookId) return false;
     const nu = norm(u.unit);
     if (!nu || !nv) return false;
     return nv.includes(nu) || (nv.length >= 3 && nu.includes(nv));
   });
-  if (units.length) {
-    const u0 = units[0];
+  // 선택 ID가 없는데 서로 다른 책이 같은 단원에 걸리면, 무엇을 기준으로 할지
+  // 알 수 없으므로 근거 단원 블록을 통째로 빼 둔다. "첫 번째 책"을 고르는
+  // 것은 데이터가 맞아 보이는 가장 위험한 실패 방식이다.
+  const textbookIds = new Set(units.map((u) => u.textbookId).filter(Boolean));
+  const safeUnits = !String(v.textbookId ?? "").trim() && textbookIds.size > 1 ? [] : units;
+  if (safeUnits.length) {
+    const u0 = safeUnits[0];
     lines.push(`## 교과서 단원 정보 (${u0.publisher})`);
     lines.push(`${u0.grade}학년 ${u0.term}학기 ${u0.unitNo}단원 「${u0.unit}」 · 총 ${u0.totalPeriods}차시`);
     lines.push("");
     lines.push("| 차시 | 학습 내용 |");
     lines.push("|---|---|");
-    for (const u of units.slice(0, 12)) lines.push(`| ${u.periodNo} | ${u.period} |`);
+    for (const u of safeUnits.slice(0, 12)) lines.push(`| ${u.periodNo} | ${u.period} |`);
     lines.push("");
   }
 
   // 2) 성취기준 — **지어내기를 막는 것이 핵심 목적**이다
-  const codes = new Set(units.flatMap((u) => u.codes));
+  const codes = new Set(safeUnits.flatMap((u) => u.codes));
   const stds = [...codes].map((c) => data.standards?.get(c)).filter(Boolean);
   if (stds.length) {
     lines.push("## 관련 성취기준 (이 목록에 없는 코드는 쓰지 마세요)");

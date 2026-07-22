@@ -56,3 +56,11 @@ test("학년-교과 조합 검증 (1학년에 과학 없음)", () => {
   assert.ok(validatePlanInput({ ...base, grade: 1, subject: "과학" }));
   assert.equal(validatePlanInput({ ...base, grade: 1, subject: "국어" }), null);
 });
+
+test("교과서ID는 선택값이며 안전한 형식만 통과", () => {
+  const textbookId = "mirae-2022-integrated-1-1-1386";
+  assert.equal(validatePlanInput({ ...base, textbookId }), null);
+  assert.equal(withDefaults({ ...base, textbookId }).textbookId, textbookId);
+  assert.ok(validatePlanInput({ ...base, textbookId: "잘못된 ID" }));
+  assert.equal(withDefaults(base).textbookId, "");
+});

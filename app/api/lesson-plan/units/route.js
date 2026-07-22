@@ -15,6 +15,7 @@
 import { NextResponse } from "next/server";
 import { loadUnits, loadStandards } from "../../../lib/server/ai/lessonData.mjs";
 import { GRADES, subjectsForGrade } from "../../../lib/lessonPlan";
+import { buildUnitList } from "../../../lib/server/ai/unitList.mjs";
 
 export const runtime = "nodejs";
 
@@ -38,22 +39,10 @@ export async function GET(request) {
     return NextResponse.json({ error: "bad_params" }, { status: 400 });
   }
 
-  const rows = units().filter((u) => u.grade === grade && u.subject === subject);
-
-  // 단원 단위로 접는다(차시가 여럿이라 단원명이 반복된다). 출판사·학기·차시수도
-  // 같이 준다 — 화면이 "5학년 2학기 · 미래엔 · 14차시" 처럼 보여줄 수 있게.
-  const byUnit = new Map();
-  for (const u of rows) {
-    const key = `${u.term}/${u.unitNo}/${u.unit}/${u.publisher}`;
-    if (!byUnit.has(key)) {
-      byUnit.set(key, {
-        term: u.term, unitNo: u.unitNo, unit: u.unit,
-        publisher: u.publisher, totalPeriods: u.totalPeriods,
-      });
-    }
-  }
-  const list = [...byUnit.values()].sort((a, b) =>
-    a.term - b.term || a.unitNo - b.unitNo);
+  // 단원 단위로 접는다(차시가 여럿이라 단원명이 반복된다). 교과서ID까지 키에
+// 포함해야 통합교과처럼 같은 단원번호가 여러 책에 있는 경우를 섞지 않는다.
+// 화면은 ID가 있는 행을 별도 교과서 선택지로 보여 준다.
+  const list = buildUnitList(units(), { grade, subject });
 
   return NextResponse.json(
     { grade, subject, units: list },

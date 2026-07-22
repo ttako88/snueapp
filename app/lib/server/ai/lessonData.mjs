@@ -181,8 +181,16 @@ export function loadStandards() {
 }
 
 // ── 2. 단원 구성 ────────────────────────────────────────────
+// v2는 교과서ID 열을 권장하지만, 이미 배포된 v1 CSV는 이 열 없이도 읽는다.
+// 새 열이 없는 기존 행은 빈 ID로 해석해 과거 데이터와 자유 입력 흐름을 보존한다.
 const UNIT_COLS = ["교과", "학년", "학기", "단원번호", "단원명",
                    "총차시", "차시번호", "차시명", "출판사"];
+
+// 교과서 ID 는 원문 발행 식별자 기반의 선택 키다. 기존 v1 행은 빈 값이
+// 허용된다. 다만 값이 있다면 URL·발행 식별자에서 만든 안정적인 slug 여야
+// 한다. 자유 입력을 이 키로 오인하면 다른 책의 차시를 섞을 수 있으므로
+// 길이와 문자 집합을 여기서 최소한으로 고정한다.
+const TEXTBOOK_ID_RE = /^[a-z0-9][a-z0-9-]{2,119}$/;
 
 export function loadUnits(knownCodes) {
   const t = readTable("단원구성.csv", UNIT_COLS);
@@ -203,8 +211,9 @@ export function loadUnits(knownCodes) {
     if (/^\d+\s*단원/.test(r.단원명)) return `단원명에 번호 포함 "${r.단원명}"`;
     if (r.차시명.length < 2 || r.차시명.length > 40) return "차시명 길이";
     if (!r.출판사) return "출판사 비어 있음";
-    const key = `${r.교과}/${g}/${s}/${r.단원번호}/${no}/${r.출판사}`;
-    if (seen.has(key)) return "중복 (교과·학년·학기·단원·차시·출판사)";
+    if (r.교과서ID && !TEXTBOOK_ID_RE.test(r.교과서ID)) return `교과서ID 형식 "${r.교과서ID}"`;
+    const key = `${r.교과}/${g}/${s}/${r.단원번호}/${no}/${r.출판사}/${r.교과서ID}`;
+    if (seen.has(key)) return "중복 (교과·학년·학기·단원·차시·출판사·교과서ID)";
     seen.add(key);
     return null;
   });
@@ -222,7 +231,7 @@ export function loadUnits(knownCodes) {
       subject: r.교과, grade: Number(r.학년), term: Number(r.학기),
       unitNo: Number(r.단원번호), unit: r.단원명, totalPeriods: Number(r.총차시),
       periodNo: Number(r.차시번호), period: r.차시명,
-      codes: valid, publisher: r.출판사,
+      codes: valid, publisher: r.출판사, textbookId: r.교과서ID || "",
     };
   });
   if (unknownCodes) {

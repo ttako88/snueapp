@@ -41,6 +41,7 @@ export default function LessonPlanPage() {
   const [grade, setGrade] = useState(3);
   const [subject, setSubject] = useState("국어");
   const [unit, setUnit] = useState("");
+  const [textbookId, setTextbookId] = useState("");
   const [duration, setDuration] = useState(40);
   // 2단계(선택). 비워 두면 프롬프트에 줄 자체가 안 들어간다.
   // model 은 빈 값이면 교과·학년으로 자동 추천된다 — 고르라고 강요하면
@@ -64,6 +65,7 @@ export default function LessonPlanPage() {
       // 수학" 에 들고 가면 근거가 안 맞는다). 항상 비우고 새로 고르게 한다.
       setUnitList([]);
       setUnit("");
+      setTextbookId("");
       try {
         const r = await fetch(`/api/lesson-plan/units?grade=${grade}&subject=${encodeURIComponent(subject)}`);
         const d = r.ok ? await r.json() : null;
@@ -86,7 +88,7 @@ export default function LessonPlanPage() {
 
   async function submit(planTypeOverride) {
     const pt = planTypeOverride || planType;
-    const input = withDefaults({ planType: pt, grade, subject, unit, duration, model, ...opt });
+    const input = withDefaults({ planType: pt, grade, subject, unit, textbookId, duration, model, ...opt });
     const invalid = validatePlanInput(input);
     if (invalid) { setNotice({ type: "error", text: invalid }); return; }
 
@@ -190,22 +192,30 @@ export default function LessonPlanPage() {
                   {unitList.map((u) => {
                     const label = `${u.unitNo}. ${u.unit}`;
                     return (
-                      <button key={`${u.term}-${u.unitNo}-${u.unit}`}
-                        onClick={() => setUnit(u.unit)}
+                      <button key={`${u.term}-${u.unitNo}-${u.unit}-${u.publisher}-${u.textbookId}`}
+                        onClick={() => {
+                          // 같은 단원을 다시 누르면 선택 해제(토글). 안 그러면 한 번
+                          // 고른 뒤 나갔다 와야만 바꿀 수 있다.
+                          if (unit === u.unit && textbookId === (u.textbookId || "")) {
+                            setUnit(""); setTextbookId("");
+                          } else {
+                            setUnit(u.unit); setTextbookId(u.textbookId || "");
+                          }
+                        }}
                         className={`rounded-lg px-3 py-2 text-left text-sm ${
-                          unit === u.unit ? "bg-[#0095da] font-bold text-white"
+                          unit === u.unit && textbookId === (u.textbookId || "") ? "bg-[#0095da] font-bold text-white"
                                           : "bg-[#f2f6fa] text-[#0c4470]/80"}`}>
                         {label}
                         <span className={`ml-1.5 text-[11px] ${unit === u.unit ? "text-white/70" : "text-[#0c4470]/35"}`}>
-                          {u.term}학기 · {u.totalPeriods}차시
+                          {u.term}학기 · {u.totalPeriods}차시{u.textbookName ? ` · ${u.textbookName} 책` : ""}
                         </span>
                       </button>
                     );
                   })}
                 </div>
                 <input
-                  value={unitList.some((u) => u.unit === unit) ? "" : unit}
-                  onChange={(e) => setUnit(e.target.value)} maxLength={60}
+                  value={unitList.some((u) => u.unit === unit && textbookId === (u.textbookId || "")) ? "" : unit}
+                  onChange={(e) => { setUnit(e.target.value); setTextbookId(""); }} maxLength={60}
                   placeholder="목록에 없으면 직접 적어주세요"
                   className="mt-1.5 w-full rounded-xl bg-[#f2f6fa] px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#0095da]/40"
                 />
@@ -293,7 +303,7 @@ export default function LessonPlanPage() {
               </p>
             )}
 
-            <button onClick={submit} disabled={busy}
+            <button onClick={() => submit()} disabled={busy}
               className="mt-3 w-full rounded-xl bg-[#0095da] py-2.5 text-sm font-bold text-white disabled:opacity-40">
               {busy ? "만드는 중… (20초쯤 걸려요)" : "지도안 만들기"}
             </button>

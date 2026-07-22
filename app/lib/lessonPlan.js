@@ -120,6 +120,14 @@ export function validatePlanInput(v) {
   const unit = String(v?.unit ?? "").trim();
   if (unit.length < 2 || unit.length > 60) return "단원·주제를 2~60자로 적어주세요.";
 
+  // 실제 교과서 목록에서 고른 경우에만 들어오는 선택 키다. 서버에서도
+  // 형식을 확인해 임의 문자열이 근거 필터를 바꾸지 못하게 한다. 빈 값은
+  // 자유 입력과 기존 v1 요청의 하위 호환을 위해 허용한다.
+  const textbookId = String(v?.textbookId ?? "").trim();
+  if (textbookId && !/^[a-z0-9][a-z0-9-]{2,119}$/.test(textbookId)) {
+    return "교과서 선택 정보를 다시 골라주세요.";
+  }
+
   // 수업모형은 선택이다. 다만 **값이 왔다면** 아는 값이어야 한다 —
   // 모르는 값을 조용히 기본값으로 바꾸면 사용자가 고른 것과 다른 게 나온다.
   if (v?.model && !TEACHING_MODELS.some((m) => m.key === v.model)) {
@@ -135,5 +143,9 @@ export function validatePlanInput(v) {
 
 /** 검증을 통과한 입력에 기본값을 채워 넣는다. 서버·화면이 같은 결과를 쓰도록. */
 export function withDefaults(v) {
-  return { ...v, model: v.model || defaultModelFor(v.subject, v.grade) };
+  return {
+    ...v,
+    textbookId: String(v?.textbookId ?? "").trim(),
+    model: v.model || defaultModelFor(v.subject, v.grade),
+  };
 }

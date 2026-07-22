@@ -282,9 +282,18 @@ export default function LoginPage() {
                 <FieldWithCheck label="학번" value={su.hakbeon} onChange={(v) => setField("hakbeon", v)}
                   placeholder="학번 8자리" inputMode="numeric" avail={hAvail}
                   okText="가입 가능한 학번입니다" takenText="이미 가입된 학번입니다" formatText="학번 형식(8자리)을 확인해 주세요" />
+                <div className="mt-1.5 rounded-lg bg-[#eef7ff] px-3 py-2">
+                  <p className="text-[11px] font-bold leading-relaxed text-[#0c4470]/80">
+                    🔒 학번은 입력하는 즉시 암호화(되돌릴 수 없는 해시)되어 저장돼요.
+                  </p>
+                  <p className="mt-0.5 text-[11px] leading-relaxed text-[#0c4470]/60">
+                    원문 숫자는 서버 어디에도 남지 않고, <b>재학생·중복가입 확인 대조에만</b> 쓰여요.
+                    <b>관리자(운영자)도 여러분의 학번을 볼 수 없어요.</b> 다른 용도·외부 제공은 없어요.
+                  </p>
+                </div>
                 <p className="mt-1 text-[11px] leading-relaxed text-[#0c4470]/40">
-                  입력한 학번은 <b className="text-[#0c4470]/55">추후 재학생 인증 서류의 정보와 대조</b>됩니다.
-                  정보가 다를 경우 재학생 인증 및 일부 서비스 이용이 제한될 수 있어요.
+                  단, 입력한 학번은 <b className="text-[#0c4470]/55">추후 재학생 인증 서류와 대조</b>돼요.
+                  정보가 다르면 재학생 인증 및 일부 서비스 이용이 제한될 수 있어요.
                 </p>
                 <FieldWithCheck label="닉네임" value={su.nickname} onChange={(v) => setField("nickname", v)}
                   placeholder="닉네임 (2~16자)" avail={nAvail}
@@ -301,7 +310,8 @@ export default function LoginPage() {
                       <input type="checkbox" checked={hakbeonConsent} onChange={(e) => setHakbeonConsent(e.target.checked)} className="mt-0.5 h-4 w-4 accent-[#0095da]" />
                       <span className="text-[11px] leading-relaxed text-[#0c4470]/70">
                         <b>[필수]</b> 학번은 <b>서울교대 재학생 확인</b>과 <b>1인 1계정(중복가입 방지)</b>에만 쓰여요.
-                        입력한 학번은 <b>단방향 암호화(해시)되어 저장</b>되고 <b>원문은 보관하지 않아요.</b> 다른 용도·제3자 제공 없어요.
+                        암호화(되돌릴 수 없는 해시)되어 저장돼 <b>원문은 아무도(관리자 포함) 볼 수 없고</b>,
+                        다른 용도나 외부 제공은 없어요.
                       </span>
                     </label>
                     <label className="flex items-start gap-2">

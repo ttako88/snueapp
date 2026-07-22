@@ -29,8 +29,20 @@
   - 내 SR 잔액과 함께 표시 → 부족하면 비활성+안내("SR이 모자라요. 강의평 쓰고 충전!").
 - 선택한 모델 → 생성 요청에 실려 감. 차감량이 모델마다 다른 건 **카드에 SR 숫자로** 직접 보여주는 게 가장 명확(토글보다 카드 메뉴판).
 
-## D. SR 경제 (버는 곳/쓰는 곳/UI) — 별도 phase
-- **버는 곳**(적립원천): 강의평가 작성·실습후기·자료 등록·Google Rewarded Ads 시청·가입/출석 보너스. 각 +N SR (022 ticket_ledger 원장, reason별).
+## B-2. API 키 콘솔 관리 (소유자 확정: 폰에서 딸깍) — 안전설계 필수
+- 신규 테이블 `private.ai_provider_keys(provider text pk, key_ciphertext bytea, last4 text, updated_by, updated_at)`.
+  - **암호화 저장**(pgcrypto pgp_sym_encrypt, 대칭키는 env `AI_KEY_ENC_SECRET` — DB만 털려도 평문 아님).
+  - **쓰기 전용 콘솔**: owner가 키 붙여넣어 저장/교체만. 화면엔 `설정됨 ····<last4>` 만. **원문 반환 RPC 절대 없음**.
+  - set RPC = owner 전용(authenticated, actor_role_check('owner')). 생성 서버(service_role)만 복호화해 사용.
+  - provider.mjs 의 availableProviders/generate 가 env 키 대신(또는 우선) 이 테이블에서 복호화 키를 읽게 확장. env 폴백 유지.
+- **트레이드오프(소유자 인지)**: env=최상 안전(키가 DB에 없음). 콘솔=폰 편의↔DB에 암호문 존재. 위 설계로 유출표면 최소화. 소유자가 편의 우선으로 콘솔화 택함.
+- **⚠️ 키 원문 입력은 소유자 본인만**(Claude 는 키 값 입력 금지 — 규율).
+
+## D. SR 경제 (버는 곳/쓰는 곳/UI) — **이번에 묶어서 각 잡고 (소유자 확정)**
+- **버는 곳**(적립원천) — 소유자: "강의평가·학교후기 슬슬 오픈":
+  · **강의평가 작성**(courseReview flag, 011/016) → +N SR. ※ 차분공격 snapshot + 과목마스터 적재 선행(BACKLOG §3).
+  · **학교후기**(신규 — 실습학교/학교 리뷰) → +N SR.
+  · 실습후기·자료 등록·Google Rewarded Ads(S6, 사업자 후)·가입/출석 보너스. 각 +N SR (022 ticket_ledger, reason별).
 - **쓰는 곳**: 지도안 생성(모델별, 위 B)·자료 열람(해피캠퍼스식). SR = 현금화·양도 불가.
 - **UI**: 잔액·거래내역(내역 페이지) + 각 소비지점에 가격 표시 + 충전 유도.
 - durable 상태기계(023 토대): CHARGED→GENERATING→CONSUMED/REFUNDED. timeout 시 영구차감 방지.

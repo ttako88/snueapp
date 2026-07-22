@@ -17,6 +17,7 @@ import {
   computeHmacs, VerifyInputError, VerifyConfigError,
 } from "../../../lib/server/verification/hmac.mjs";
 import { VERIFY_BUCKET, buildStagingPath, UPLOAD_URL_TTL_SEC } from "../../../lib/server/verification/files.mjs";
+import { parseHakbeon } from "../../../lib/hakbeon.js";
 
 export const runtime = "nodejs";
 
@@ -36,13 +37,15 @@ export async function POST(request) {
   catch { return json({ error: "bad_request" }, 400); }
 
   // --- 입력 정규화 ---------------------------------------------------------
-  let realName, docType, hmacs, keyVers, currentVer;
+  let realName, docType, hmacs, keyVers, currentVer, academic = null;
   try {
     realName = normalizeRealName(body?.realName);
     docType = normalizeDocType(body?.docType);
     const studentNo = normalizeStudentNo(body?.studentNo);
     ({ hmacs, keyVers, currentVer } = computeHmacs(studentNo, process.env));
-    // studentNo 는 여기서 스코프를 벗어난다. 이 아래로 원문을 옮기지 않는다.
+    // 학번에서 학과·학년 세그먼트만 파생해 둔다(원문이 아니라 파생값). 이 값만
+    // 아래로 옮기고, studentNo 원문은 여기서 스코프를 벗어난다.
+    academic = parseHakbeon(studentNo);
   } catch (e) {
     if (e instanceof VerifyInputError) return json({ error: "invalid_input", code: e.code }, 400);
     if (e instanceof VerifyConfigError) return json({ error: "service_unavailable" }, 503);
@@ -75,6 +78,23 @@ export async function POST(request) {
   }
 
   const requestId = String(newId);
+
+  // --- 1.5) 학번 파생 세그먼트 저장 (best-effort) ---
+  // 서버가 정규화 학번에서 독립 재계산한 학과·학년만 저장한다(클라 파생 불신).
+  // 실패해도 인증 흐름엔 영향 없음 — 세그먼트는 부가정보다. 원문 학번은 안 넘긴다.
+  if (academic?.ok) {
+    try {
+      await svc.rpc("svc_set_member_academic", {
+        p_member_id: who.userId,
+        p_entry_year: academic.entryYear,
+        p_dept_code: academic.deptCode,
+        p_entry_department: academic.department,
+        p_track: academic.track,
+        p_dept_status: academic.deptStatus,
+        p_expected_grade: academic.expectedGrade,
+      });
+    } catch { /* 세그먼트 저장 실패는 무시(인증 우선) */ }
+  }
 
   // --- 2) 업로드용 signed URL ---
   const { data: signed, error: signErr } = await svc.storage

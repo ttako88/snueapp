@@ -1,6 +1,7 @@
 import "./globals.css";
 import Header from "./components/Header";
 import BottomNav from "./components/BottomNav";
+import Analytics from "./components/Analytics";
 
 // 브라우저 탭에 뜨는 제목/설명
 export const metadata = {
@@ -28,6 +29,8 @@ export default function RootLayout({ children }) {
           {/* 아래: 탭바 (고정) */}
           <BottomNav />
         </div>
+        {/* 이용 계측(screen_view) + GA4. flag·동의·env 게이트라 조건 안 맞으면 아무것도 안 함 */}
+        <Analytics />
       </body>
     </html>
   );

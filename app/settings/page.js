@@ -6,6 +6,7 @@ import { SetupSheet } from "../components/Timetable";
 import { DEFAULT_SEMESTER, SEMESTER_LABELS, loadTimetableSetup, saveTimetableSetup } from "../lib/timetable";
 import { useAuth, signOut } from "../lib/identity/useAuth";
 import { CALENDAR_KINDS, loadHiddenKinds, saveHiddenKinds } from "../lib/calendarFilters";
+import ConsentSettings from "../components/ConsentSettings";
 
 // 설정 항목 정의. 나중에 새 설정이 생기면 여기 섹션을 추가하면 됨
 // (앞으로 헤더 햄버거 메뉴로 옮기더라도 이 페이지 자체는 그대로 재사용).
@@ -58,6 +59,9 @@ export default function SettingsPage() {
   return (
     <div className="flex flex-col gap-4 px-4 py-4">
       <h2 className="text-lg font-bold text-[#0c4470]">설정</h2>
+
+      {/* 데이터 동의 (productAnalytics 켜지고 로그인 시에만 노출) */}
+      <ConsentSettings />
 
       {/* 계정 (게시판용 로그인) */}
       <section className="rounded-2xl bg-white p-4 shadow-sm">

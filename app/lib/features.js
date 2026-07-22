@@ -118,7 +118,7 @@ export const FEATURES = {
     requires: "024_analytics_consent.sql 적용 + finalize 라우트 학번 파생 저장",
   },
   productAnalytics: {
-    enabled: false,
+    enabled: true, // 2026-07-23 활성화: Analytics 마운트+track 배선+처리방침 반영. 미동의=익명 카운터만, 동의 시 학과·학년 세그먼트.
     label: "상세 이용통계 + 운영자 대시보드",
     summary: "동의 회원의 가명 이용 이벤트 집계 + /admin/analytics 세그먼트 통계",
     needsDb: true,

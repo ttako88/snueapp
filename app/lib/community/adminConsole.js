@@ -86,6 +86,12 @@ export async function revokeEntitlement({ grantId, reason }) {
   return supabase.rpc("revoke_entitlement", { p_grant_id: grantId, p_reason: reason });
 }
 
+/** 회원 메모 저장/삭제(빈값=삭제) — member.detail 권한. */
+export async function setMemberNote({ memberId, note }) {
+  if (!supabase) return NO;
+  return supabase.rpc("set_member_note", { p_member_id: memberId, p_note: note });
+}
+
 /** 역할 부여/변경 — owner 만(grant_role 이 DB 에서 재검사·마지막 owner 보호). reason 필수. */
 export async function setMemberRole({ memberId, role, reason }) {
   if (!supabase) return NO;

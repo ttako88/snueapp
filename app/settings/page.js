@@ -90,7 +90,13 @@ export default function SettingsPage() {
         )}
       </section>
 
-      {/* 내 스크랩 — 글에서 스크랩한 것 모아보기 (로그인 시) */}
+      {/* 알림함 · 내 스크랩 (로그인 시) */}
+      {session && (
+        <Link href="/settings/messages" className="flex items-center justify-between rounded-2xl bg-white p-4 shadow-sm active:opacity-80">
+          <span className="text-sm font-medium text-[#0c4470]">🔔 알림함</span>
+          <span className="shrink-0 text-xs font-bold text-[#0095da]">받은 알림 ›</span>
+        </Link>
+      )}
       {session && (
         <Link href="/settings/bookmarks" className="flex items-center justify-between rounded-2xl bg-white p-4 shadow-sm active:opacity-80">
           <span className="text-sm font-medium text-[#0c4470]">📌 내 스크랩</span>

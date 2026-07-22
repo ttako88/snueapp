@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "../../../lib/identity/useAuth";
 import {
   adminListMembers, adminMemberDetail, grantEntitlement, revokeEntitlement, roleHasPerm,
-  isNotActivated, setMemberRole, deleteMember,
+  isNotActivated, setMemberRole, deleteMember, setMemberNote,
 } from "../../../lib/community/adminConsole";
 
 const ROLE_LABEL = { member: "일반", moderator: "모더레이터", operator: "운영자", owner: "오너" };
@@ -92,6 +92,9 @@ export default function MembersPage() {
                 {m.hakbeon_verified && " · 🎓학번"}
                 {m.analytics_consent && " · 📊동의"}
               </span>
+              {m.note && (
+                <span className="mt-0.5 block truncate text-[11px] text-[#0c4470]/35">📝 {m.note}</span>
+              )}
             </span>
             <span className="text-xs text-[#0c4470]/30">›</span>
           </button>
@@ -115,6 +118,8 @@ function MemberDetail({ memberId, canManageCost, isOwner, onClose, onChanged }) 
   // 인앱 사유 입력으로 대체한다: 버튼을 누르면 pending 을 세우고 사유칸을 띄운다.
   const [pending, setPending] = useState(null); // { kind:'grant'|'revoke', grantType?, quota?, grantId?, title }
   const [reason, setReason] = useState("");
+  const [noteText, setNoteText] = useState("");
+  const [noteMsg, setNoteMsg] = useState(null);
 
   useEffect(() => {
     let alive = true;
@@ -123,10 +128,18 @@ function MemberDetail({ memberId, canManageCost, isOwner, onClose, onChanged }) 
       const { data, error: err } = await adminMemberDetail(memberId);
       if (!alive) return;
       if (err) setError(err.message || "불러오지 못했어요");
-      else setDetail(data);
+      else { setDetail(data); setNoteText(data?.note || ""); }
     })();
     return () => { alive = false; };
   }, [memberId, detailTick]);
+
+  const saveNote = async () => {
+    setNoteMsg(null); setBusy(true);
+    const { error: err } = await setMemberNote({ memberId, note: noteText });
+    setBusy(false);
+    if (err) { setNoteMsg("저장 실패"); return; }
+    setNoteMsg("저장했어요"); onChanged?.();
+  };
 
   const refresh = () => { setDetailTick((t) => t + 1); onChanged?.(); };
 
@@ -190,6 +203,19 @@ function MemberDetail({ memberId, canManageCost, isOwner, onClose, onChanged }) 
             <Row label="학번 인증" value={detail.hakbeon_verified ? "완료 🎓" : "미등록"} />
             <Row label="통계 동의" value={detail.analytics_consent ? "동의 📊" : "미동의"} />
             <Row label="제재" value={SANCTION_LABEL[detail.sanction] || "없음"} />
+
+            {/* 운영자 메모 — 회원별 1개. 목록에도 회색 미리보기로 뜬다. */}
+            <div className="mt-3 rounded-xl bg-[#f2f6fa] p-3">
+              <p className="text-xs font-bold text-[#0c4470]/70">📝 운영자 메모</p>
+              <textarea value={noteText} onChange={(e) => setNoteText(e.target.value)} rows={2}
+                placeholder="이 회원에 대한 메모 (운영자만 보여요)" maxLength={1000}
+                className="mt-1.5 w-full resize-none rounded-lg bg-white px-3 py-2 text-sm text-[#0c4470] outline-none" />
+              <div className="mt-1 flex items-center gap-2">
+                <button disabled={busy} onClick={saveNote}
+                  className="rounded-lg bg-[#0c4470] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">메모 저장</button>
+                {noteMsg && <span className="text-[11px] text-[#0c4470]/50">{noteMsg}</span>}
+              </div>
+            </div>
 
             {/* 이용권 */}
             <p className="mb-1 mt-4 text-xs font-bold text-[#0c4470]/70">이용권</p>

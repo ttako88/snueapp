@@ -5,6 +5,14 @@
 > ⚠️ "파일 있음 ≠ 적용/배포됨" — 라이브는 배포SHA·flag·DB 실측이 근거.
 
 ---
+## ⏫ 밤 후반 갱신 (컴팩 이후, 이 줄이 §0·§1보다 최신)
+- **프로덕션 배포 = `9b56b6d` (Ready 확인, 빌드 성공).** 아래 §0의 460bff4는 낡음.
+- **§1 적용대기 SQL 전부 해소**: 029·032·033 **모두 프로덕션 적용 확인**(읽기전용 프로브 `scripts/manual/probe-pending-applied.mjs`로 실측 — analytics VOLATILE·lesson_plan_saves·member_notes 다 존재). 소유자가 cmd로 다 침. **더 이상 적용 대기 SQL 없음.**
+- **§3 1단계 완료+배포**: `budget.mjs` MODELS 메타(label·blurb·badge·order·provider) + `provider.mjs` `availableModels()`. 유저영향 0(아직 호출부 없음). 커밋 419ec8a.
+- **게시판 콘솔 설계 doc 작성**: `docs/BOARD_CONSOLE_DESIGN_2026-07-23.md` — 전체 옵션 superset(A~F + G). **소유자 번호 선택 대기** → 고른 범위로 구현. 커밋 9b56b6d.
+- **주의(관찰)**: git push 후 9b56b6d가 자동 Ready 되고 훅 POST 빌드가 하나 더 돌았다 → **웹훅 자동배포가 켜져 있을 수 있음**(워크오더는 "꺼짐"이라 적었으나 실측은 자동배포 정황). 다음 배포 땐 push만으로 뜨는지 먼저 확인.
+- **다음**: §3 2단계(ai_model_pricing 테이블+가격콘솔, 마이그레이션 034) OR 게시판 콘솔(소유자 번호 선택 후). 초기 SR 시드값 = 제미나이Flash 약안100/세안300, Claude Haiku 약안150/세안400(소유자 "초기값대로" 승인).
+
 ## 0. 지금 상태 한 줄
 - **프로덕션 배포 = origin/main `460bff4`** (Deploy Hook로 배포함, 전부 push됨). 롤백은 직전 커밋들로 가역.
 - **배포 방식**: git push만으론 안 뜬다 → **Vercel Deploy Hook POST**. tab-2(vercel Settings/Git)에서 훅 URL fetch POST. 훅 URL은 채팅에 안 남김(배포트리거 권한).

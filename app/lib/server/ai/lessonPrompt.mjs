@@ -119,9 +119,18 @@ export function buildEvidence(v, data) {
   const lines = [];
 
   // 1) 해당 학년·교과·단원의 차시 정보
-  const units = (data.units ?? []).filter(
-    (u) => u.subject === v.subject && u.grade === Number(v.grade)
-      && (v.unit ?? "").includes(u.unit));
+  // 매칭은 정규화(공백·문장부호 제거) 후 양방향 포함으로 본다. 목록에서 고르면
+  // 정확히 일치하고, 자유 입력(띄어쓰기·기호 차이, 접두 일부)도 근거를 놓치지
+  // 않게 한다. 다만 너무 짧은 질의(≤2자)의 역방향 매칭은 엉뚱한 단원을 끌어와
+  // 잘못된 성취기준을 주입할 수 있으므로 막는다(교과·학년은 항상 엄격).
+  const norm = (s) => String(s ?? "").replace(/[\s·.,()~\-]/g, "");
+  const nv = norm(v.unit);
+  const units = (data.units ?? []).filter((u) => {
+    if (u.subject !== v.subject || u.grade !== Number(v.grade)) return false;
+    const nu = norm(u.unit);
+    if (!nu || !nv) return false;
+    return nv.includes(nu) || (nv.length >= 3 && nu.includes(nv));
+  });
   if (units.length) {
     const u0 = units[0];
     lines.push(`## 교과서 단원 정보 (${u0.publisher})`);

@@ -12,6 +12,7 @@ import { supabase } from "../../lib/supabase/client";
 import { useAuth } from "../../lib/identity/useAuth";
 import { isEnabled } from "../../lib/features.js";
 import LessonPlanView from "../../components/LessonPlanView";
+import LessonPlanIntro from "../../components/LessonPlanIntro";
 import { downloadLessonPlan, printLessonPlan } from "../../lib/lessonExport";
 import { myLessonPlanAccess, saveLessonPlan } from "../../lib/community/lessonPlanSaves";
 import {
@@ -168,6 +169,8 @@ export default function LessonPlanPage() {
           <Link href="/practicum/lesson-plan/saved" className="ml-auto text-xs font-bold text-[#0095da]">📁 내 지도안</Link>
         )}
       </div>
+
+      <LessonPlanIntro />
 
       {/* 내 이용권 잔여 표시 */}
       {session && access?.source === "owner" && (

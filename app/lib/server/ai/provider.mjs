@@ -33,6 +33,30 @@ export function availableProviders(env = process.env) {
   };
 }
 
+/**
+ * 이용자 메뉴판용 모델 목록. MODELS 정적 메타 + 키 존재여부(availableProviders)를
+ * 합쳐 order 순으로 돌려준다. **SR 가격은 여기 없다** — DB(ai_model_pricing)가 출처라
+ * 이 함수는 "어떤 모델이 있고 쓸 수 있는가"만 답한다(가격은 호출부가 DB에서 붙인다).
+ *
+ * available=false(키 미등록) 모델도 목록에 남긴다 — 메뉴판에서 회색으로 "준비 중"
+ * 표시하기 위해서다. **실제 생성 허용은 서버가 최종 검증**한다(클라가 임의 model 로
+ * 비활성/비싼 모델 우회 못 하게). 여기서 숨기는 건 UI 편의일 뿐 보안 경계가 아니다.
+ */
+export function availableModels(env = process.env) {
+  const avail = availableProviders(env);
+  return Object.entries(MODELS)
+    .map(([id, m]) => ({
+      id,
+      label: m.label,
+      provider: m.provider ?? id.split("-")[0],
+      blurb: m.blurb ?? "",
+      badge: m.badge ?? null,
+      order: Number.isFinite(m.order) ? m.order : 999,
+      available: Boolean(avail[id]),
+    }))
+    .sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
+}
+
 export class AiKeyMissing extends Error {
   constructor(model) {
     super(`AI 키 없음: ${model}`);

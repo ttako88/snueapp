@@ -27,12 +27,24 @@ if (typeof window !== "undefined") {
 //
 // 단가는 **실제보다 높게** 잡는다. 낮게 잡으면 예산 상한이 새기 때문에,
 // 이쪽 방향의 오차만 안전하다.
+//
+// 사용자 표기 메타(label·blurb·badge·order·provider)도 여기 함께 둔다 —
+// AI 모델 레지스트리의 정적 출처다. 신모델 추가 = 이 표에 한 줄 + provider.mjs
+// 어댑터(있으면) + API 키. label/blurb/badge/order 만 바꿔도 메뉴판이 갱신된다.
+//   · in/out : 예산 상한용 토큰 원가(USD/1M) — 안전하게 높게
+//   · label  : 이용자에게 보이는 이름
+//   · blurb  : 한 줄 소개(메뉴판 카드)
+//   · badge  : 성격 태그('빠름'|'초경량'|'고품질'|'프리미엄'|'균형')
+//   · order  : 메뉴 정렬(작을수록 위)
+//   · provider: 어댑터 계열(키 판단·표시용)
+// ⚠️ 모델별 SR 가격은 **여기 없다.** DB(private.ai_model_pricing)가 단일 출처다.
+//    코드에 SR 값을 두면 콘솔 편집과 이중 출처가 되어 조용히 어긋난다.
 export const MODELS = {
-  "gemini-flash-latest":      { in: 0.60, out: 3.60, label: "Gemini Flash" },
-  "gemini-flash-lite-latest": { in: 0.25, out: 1.20, label: "Gemini Flash Lite" },
-  "gemini-pro-latest":        { in: 2.50, out: 15.00, label: "Gemini Pro" },
-  "claude-haiku-4-5":         { in: 1.00, out: 5.00, label: "Claude Haiku 4.5" },
-  "gpt-5-mini":               { in: 0.25, out: 2.00, label: "GPT-5 mini" },
+  "gemini-flash-latest":      { in: 0.60, out: 3.60,  label: "Gemini Flash",      provider: "gemini", badge: "빠름",     order: 1, blurb: "빠르고 균형 잡힌 기본 모델" },
+  "gemini-flash-lite-latest": { in: 0.25, out: 1.20,  label: "Gemini Flash Lite", provider: "gemini", badge: "초경량",   order: 0, blurb: "가장 빠르고 가벼운 경량 모델" },
+  "gemini-pro-latest":        { in: 2.50, out: 15.00, label: "Gemini Pro",        provider: "gemini", badge: "프리미엄", order: 2, blurb: "가장 정교한 고품질 모델" },
+  "claude-haiku-4-5":         { in: 1.00, out: 5.00,  label: "Claude Haiku 4.5",  provider: "claude", badge: "고품질",   order: 3, blurb: "문장이 자연스러운 고품질 모델" },
+  "gpt-5-mini":               { in: 0.25, out: 2.00,  label: "GPT-5 mini",        provider: "openai", badge: "균형",     order: 4, blurb: "균형 잡힌 범용 모델" },
 };
 
 // ⚠️ 고정 버전(gemini-2.5-flash 등)을 쓰고 싶었지만 **쓸 수 없다.**

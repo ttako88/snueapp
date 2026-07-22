@@ -14,6 +14,7 @@ import {
   DEFAULT_MODEL, MODELS, maxCostKrw, clampPrompt, reserve, settle, release,
 } from "../../lib/server/ai/budget.mjs";
 import { generate, AiKeyMissing, availableProviders } from "../../lib/server/ai/provider.mjs";
+import { classifyFunding, needsOwnerFallback, newRequestId } from "../../lib/server/ai/lessonAccess.mjs";
 import { validatePlanInput, withDefaults, PLAN_TYPES } from "../../lib/lessonPlan";
 // 프롬프트는 여기서 만들지 않는다. 예전에 이 파일과 샘플 스크립트에 **각각**
 // 복사돼 있어서, 샘플로 품질을 튜닝해도 앱에는 반영되지 않았다.
@@ -44,16 +45,42 @@ export async function POST(request) {
   if (who.error) return json({ error: who.error }, who.status);
 
   // ⚠️ 지도안 생성은 소유자 지갑에서 실제 돈이 나간다. 로그인 개방(015) 후에는
-  //    아무나 로그인만 하면 예산을 소진할 수 있다. 그래서 공개(lessonPlanPublic)
-  //    전까지는 **owner 만** 생성한다. 개인별 한도(aiCreditCharge)가 켜지면 그때
-  //    이 flag 를 열어 인증회원에게 개방한다. 서버 게이트가 진짜 경계다.
-  if (!isEnabled("lessonPlanPublic")) {
-    let role = null;
+  //    아무나 로그인만 하면 예산을 소진할 수 있다. 서버 게이트가 진짜 경계다.
+  //
+  // funding_source 는 요청당 정확히 하나다 (GPT R2 Q7):
+  //   owner        : 지갑 주인 → 무제한, 과금 없음
+  //   entitlement  : 개별 이용권 보유자 → quota 예약/소비, SR·과금 0
+  //   paid         : lessonPlanPublic 공개 상태 → 일반 경로(aiCreditCharge flag 시 SR 차감)
+  //   (없음)       : 거부
+  //
+  // ⚠️ migration 028(이용권) 미적용 상태로 이 코드가 먼저 배포될 수 있다. 그때는
+  //    preview RPC 가 없어 error 가 난다 → **기존 owner-only 동작으로 폴백**(fail-closed).
+  let fundingSource = null;
+  {
+    // 1) 이용권 자격 조회(비변경). RPC error/null 이면 028 미적용으로 본다.
+    let preview = null, previewErr = null;
     try {
-      const { data } = await svc.rpc("svc_reviewer_role", { p_actor_id: who.userId });
-      role = data ?? null;
-    } catch { role = null; }
-    if (role !== "owner") return json({ error: "not_available_yet" }, 403);
+      const r = await svc.rpc("svc_lesson_plan_access_preview", { p_actor: who.userId });
+      preview = r.data ?? null; previewErr = r.error ?? null;
+    } catch (e) { previewErr = e; }
+    const previewAvailable = !previewErr && preview !== null;
+    const publicOn = isEnabled("lessonPlanPublic");
+
+    // 2) 폴백(owner 확인)이 필요할 때만 reviewer_role 을 조회한다.
+    let isOwnerFallback = false;
+    if (needsOwnerFallback({ previewAvailable, publicOn })) {
+      try {
+        const { data } = await svc.rpc("svc_reviewer_role", { p_actor_id: who.userId });
+        isOwnerFallback = (data ?? null) === "owner";
+      } catch { isOwnerFallback = false; }
+    }
+
+    // 3) 순수 판정표로 자금원을 정한다.
+    const decision = classifyFunding({
+      previewAvailable, previewSource: preview?.source ?? null, publicOn, isOwnerFallback,
+    });
+    if (decision.deny) return json({ error: "not_available_yet" }, 403);
+    fundingSource = decision.source;
   }
 
   let body;
@@ -85,22 +112,40 @@ export async function POST(request) {
   // 실제 비용이 이 값을 넘을 수 없다.
   const maxKrw = maxCostKrw(model, [...(built.system + prompt)].length, maxOut);
 
-  // --- SR 차감 (flag ON 일 때만) ---
+  // --- 자금원별 예약 (요청당 하나: entitlement 또는 SR) ---
   // 예산 상한(018)과 목적이 다르다. 예산은 "소유자 지갑이 하루에 얼마까지
-  // 나가는가", SR 은 "한 사람이 얼마나 쓰는가" 다. 예산만 있으면 한 계정이
-  // 하루치를 통째로 소진해 나머지 전원이 못 쓰게 만들 수 있다.
+  // 나가는가", SR/이용권은 "한 사람이 얼마나 쓰는가" 다.
   //
-  // ⚠️ flag 가 OFF 면 개인별 제한이 **없다**. 023 을 적용한 뒤 켤 것.
-  //    (flag 로 감싸는 이유: 023 없이 배포돼도 지도안이 깨지지 않게)
+  //   entitlement : quota 를 예약(reserve)한다. 성공 시 consume, 실패 시 refund.
+  //                 이 경로는 SR 을 건드리지 않는다 (funding_source 는 하나).
+  //   paid        : aiCreditCharge flag ON 이면 SR 을 차감한다(023). OFF 면 무료.
+  //   owner       : 아무 예약도 하지 않는다.
   const purpose = body.planType === "full" ? "lesson_plan_full" : "lesson_plan_brief";
-  let charge = null;
-  if (isEnabled("aiCreditCharge")) {
-    const key = `ai:${who.userId}:${purpose}:${Date.now()}`;
+  let charge = null;      // paid(SR) 경로 차감 결과
+  let entReqId = null;    // entitlement 경로 request_id (reserve→consume/refund 동일 키)
+
+  if (fundingSource === "entitlement") {
+    // request_id 는 예약↔소비/환불의 멱등 키 — 난수 기반(newRequestId)이라
+    // 같은 ms 동시요청도 서로 다른 키를 받는다(quota 우회 차단, GPT R3).
+    entReqId = newRequestId("ent", who.userId, purpose);
+    let rv = null, rvErr = null;
+    try {
+      const r = await svc.rpc("svc_reserve_lesson_plan_entitlement", {
+        p_actor: who.userId, p_request_id: entReqId });
+      rv = r.data ?? null; rvErr = r.error ?? null;
+    } catch (e) { rvErr = e; }
+    // 예약을 확인하지 못하면 생성하지 않는다(fail-closed).
+    if (rvErr) return json({ error: "entitlement_unavailable" }, 503);
+    if (rv?.ok !== true) return json({ error: rv?.reason ?? "no_entitlement" }, 403);
+    // 예약 사이 owner 로 승격된 극단적 경우엔 소비할 원장이 없다.
+    if (rv.source === "owner") entReqId = null;
+  } else if (fundingSource === "paid" && isEnabled("aiCreditCharge")) {
+    // 같은 이유로 SR 차감 멱등 키도 난수를 쓴다(같은 ms 동시요청 이중생성 방지).
+    const key = newRequestId("ai", who.userId, purpose);
     const { data: ch, error: chErr } = await svc.rpc("svc_charge_ai_credit", {
       p_member_id: who.userId, p_purpose: purpose, p_idempotency_key: key,
     });
-    // 차감을 확인하지 못하면 호출하지 않는다(fail-closed). 확인 못 한 채
-    // 돈 쓰는 경로를 두면 제한 장치가 있으나 마나다.
+    // 차감을 확인하지 못하면 호출하지 않는다(fail-closed).
     if (chErr) return json({ error: "credit_unavailable" }, 503);
     if (ch?.ok !== true) {
       return json({ error: ch?.reason ?? "insufficient_sr",
@@ -109,13 +154,22 @@ export async function POST(request) {
     charge = ch;
   }
 
-  /** SR 을 되돌린다. **실패가 확인된 경우에만** 부른다. */
+  /** 자금원을 되돌린다. **실패가 확인된 경우에만** 부른다. */
   const refund = async () => {
-    if (!charge?.entry_id) return;
-    try {
-      await svc.rpc("svc_refund_ai_credit", {
-        p_member_id: who.userId, p_entry_id: charge.entry_id });
-    } catch { /* 환불 실패는 운영 확인 대상. 응답을 바꾸지 않는다 */ }
+    if (charge?.entry_id) {
+      try { await svc.rpc("svc_refund_ai_credit", {
+        p_member_id: who.userId, p_entry_id: charge.entry_id }); } catch { /* 운영 확인 대상 */ }
+    }
+    if (entReqId) {
+      try { await svc.rpc("svc_refund_entitlement", { p_request_id: entReqId }); } catch { /* 운영 확인 대상 */ }
+    }
+  };
+
+  /** 자금원 소비를 확정한다 — 생성 성공 시에만. entitlement 는 명시 확정이 필요하다. */
+  const commitFunding = async () => {
+    if (entReqId) {
+      try { await svc.rpc("svc_consume_entitlement", { p_request_id: entReqId }); } catch { /* 운영 확인 대상 */ }
+    }
   };
 
   // --- 예약 (한도는 DB 가 정한다) ---
@@ -165,12 +219,17 @@ export async function POST(request) {
     purpose,
   });
 
+  // 생성이 성공했다 — 예약한 이용권을 소비로 확정한다(entitlement 경로만 해당).
+  await commitFunding();
+
   return json({
     planType: body.planType,
     modelLabel: MODELS[model].label,
     text: out.text,
     costKrw: acct.actual,
     accounted: acct.ok,
+    // 이 요청이 무엇으로 처리됐는지 — owner/entitlement/paid.
+    fundingSource,
     // 출력 한도에 걸려 문장 중간에서 끊긴 경우다. 잘린 것을 완성본처럼
     // 건네지 않는다 — 실습 제출물이라 그대로 내면 사용자가 손해를 본다.
     truncated: Boolean(out.truncated),

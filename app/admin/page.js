@@ -31,6 +31,7 @@ export default function AdminConsolePage() {
   }
 
   const tools = [
+    { href: "/admin/console", icon: "🎛️", title: "통합 운영 콘솔", desc: "회원·이용권·게시판·모더레이션 한 곳에서", roles: ["moderator", "operator", "owner"] },
     { href: "/admin/verification", icon: "🪪", title: "학생 인증 심사", desc: "제출 서류 확인·승인·반려", roles: ["operator", "owner"] },
     {
       href: "/admin/analytics", icon: "📊", title: "이용통계",

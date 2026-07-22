@@ -161,8 +161,8 @@ export default function SettingsPage() {
           <span className="shrink-0 text-xs font-bold text-[#0095da]">보내기 ›</span>
         </Link>
         {isReviewer && (
-          <Link href="/admin/verification" className="mt-3 flex w-full items-center justify-between border-t border-black/5 pt-3">
-            <span className="text-sm font-medium text-[#0c4470]">학생 인증 심사</span>
+          <Link href="/admin" className="mt-3 flex w-full items-center justify-between border-t border-black/5 pt-3">
+            <span className="text-sm font-medium text-[#0c4470]">관리자 콘솔</span>
             <span className="shrink-0 text-xs font-bold text-[#0095da]">운영자 ›</span>
           </Link>
         )}

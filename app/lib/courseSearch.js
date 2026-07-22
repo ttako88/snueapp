@@ -11,6 +11,29 @@ function norm(s) {
   return String(s ?? "").toLowerCase().replace(/\s+/g, "");
 }
 
+// 한글 초성. 사용자가 "ㄱㅇ" 로 "국어" 를 찾는 것은 한국 앱의 기본 기대다.
+const CHO = ["ㄱ","ㄲ","ㄴ","ㄷ","ㄸ","ㄹ","ㅁ","ㅂ","ㅃ","ㅅ","ㅆ",
+             "ㅇ","ㅈ","ㅉ","ㅊ","ㅋ","ㅌ","ㅍ","ㅎ"];
+
+/** 문자열을 초성만 뽑은 문자열로. 한글이 아닌 글자는 그대로 둔다. */
+function toChoseong(s) {
+  let out = "";
+  for (const ch of String(s ?? "")) {
+    const code = ch.charCodeAt(0);
+    if (code >= 0xac00 && code <= 0xd7a3) {
+      out += CHO[Math.floor((code - 0xac00) / 588)];
+    } else {
+      out += ch.toLowerCase();
+    }
+  }
+  return out;
+}
+
+/** 검색어가 초성으로만 이뤄졌는가 (ㄱㅇ 처럼). 한 글자라도 완성형이면 아니다. */
+function isChoseongQuery(q) {
+  return q.length > 0 && [...q].every((ch) => CHO.includes(ch));
+}
+
 /** [1,2] → "1~2교시 · 09:00–10:50" / [3] → "3교시 · 11:00–11:50" */
 export function periodLabel(periods) {
   if (!periods?.length) return "시간 미정";
@@ -29,6 +52,7 @@ export function periodLabel(periods) {
  */
 export function searchCourses(rows, f = {}) {
   const q = norm(f.q);
+  const choseong = isChoseongQuery(q);
   const grade = f.grade === "" || f.grade == null ? null : Number(f.grade);
 
   return rows.filter((c) => {
@@ -37,9 +61,14 @@ export function searchCourses(rows, f = {}) {
     if (grade != null && c.grade !== grade) return false;
     if (f.dept && c.dept !== f.dept) return false;
     if (f.day && c.day !== f.day) return false;
-    // 검색어는 과목명 또는 교수명 어느 쪽이든 부분일치
-    if (q && !norm(c.name).includes(q) && !norm(c.professor).includes(q)) return false;
-    return true;
+    if (!q) return true;
+    // 검색어가 초성만이면(ㄱㅇ) 과목명 초성으로 맞춘다. 완성형이 섞이면
+    // 일반 부분일치로 — "ㄱ어" 같은 어중간한 입력은 초성 검색으로 치지 않는다.
+    if (choseong) {
+      return toChoseong(c.name).includes(q) || toChoseong(c.professor).includes(q);
+    }
+    // 과목명 또는 교수명 어느 쪽이든 부분일치
+    return norm(c.name).includes(q) || norm(c.professor).includes(q);
   });
 }
 

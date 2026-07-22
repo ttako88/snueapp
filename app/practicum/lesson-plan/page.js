@@ -7,12 +7,12 @@
 // 화면 곳곳에 그걸 명시한다.
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase/client";
 import { useAuth } from "../../lib/identity/useAuth";
 import {
   GRADES, subjectsForGrade, TEACHING_MODELS, PLAN_TYPES, DURATIONS,
-  validatePlanInput,
+  validatePlanInput, withDefaults, defaultModelFor, OPTIONAL_LIMITS,
 } from "../../lib/lessonPlan";
 
 const MESSAGES = {
@@ -23,6 +23,10 @@ const MESSAGES = {
   generation_failed: "만들지 못했어요. 잠시 뒤 다시 시도해 주세요.",
   empty_result: "결과가 비어서 왔어요. 다시 시도해 주세요.",
   unauthorized: "로그인이 풀렸어요. 다시 로그인해 주세요.",
+  insufficient_sr: "SR이 모자라요. 강의평을 쓰거나 광고를 보면 채울 수 있어요.",
+  credit_unavailable: "잔액을 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
+  unknown_purpose: "이 기능의 요금이 아직 정해지지 않았어요.",
+  no_member: "회원 정보를 찾지 못했어요. 다시 로그인해 주세요.",
 };
 
 export default function LessonPlanPage() {
@@ -31,14 +35,39 @@ export default function LessonPlanPage() {
   const [grade, setGrade] = useState(3);
   const [subject, setSubject] = useState("국어");
   const [unit, setUnit] = useState("");
-  const [goal, setGoal] = useState("");
-  const [model, setModel] = useState("direct");
   const [duration, setDuration] = useState(40);
+  // 2단계(선택). 비워 두면 프롬프트에 줄 자체가 안 들어간다.
+  // model 은 빈 값이면 교과·학년으로 자동 추천된다 — 고르라고 강요하면
+  // 처음 쓰는 교생이 거기서 멈춘다.
+  const [model, setModel] = useState("");
+  const [opt, setOpt] = useState({
+    goal: "", learners: "", focus: "", materials: "", evaluation: "", request: "",
+  });
+  const [showMore, setShowMore] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState(null);
   const [result, setResult] = useState(null);
+  // 실제 교과서 단원 목록. 있으면 자유 입력 대신 골라서 근거가 100% 매칭된다.
+  // 없으면(데이터 미비·네트워크 실패) 자유 입력으로 떨어진다 — 둘 다 동작.
+  const [unitList, setUnitList] = useState([]);
+
+  useEffect(() => {
+    let alive = true;
+    setUnitList([]);
+    // 학년·교과가 바뀌면 이전 단원은 무의미하다("5학년 국어" 단원을 "3학년
+    // 수학" 에 들고 가면 근거가 안 맞는다). 항상 비우고 새로 고르게 한다.
+    setUnit("");
+    fetch(`/api/lesson-plan/units?grade=${grade}&subject=${encodeURIComponent(subject)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive && Array.isArray(d?.units)) setUnitList(d.units); })
+      .catch(() => { /* 자유 입력으로 떨어진다 */ });
+    return () => { alive = false; };
+  }, [grade, subject]);
 
   const subjects = subjectsForGrade(grade);
+  const effectiveModel = model || defaultModelFor(subject, grade);
+  const setOptField = (k, v) => setOpt((o) => ({ ...o, [k]: v }));
+  const filledCount = Object.values(opt).filter((s) => s.trim()).length + (model ? 1 : 0);
 
   function changeGrade(g) {
     setGrade(g);
@@ -47,7 +76,7 @@ export default function LessonPlanPage() {
   }
 
   async function submit() {
-    const input = { planType, grade, subject, unit, goal, model, duration };
+    const input = withDefaults({ planType, grade, subject, unit, duration, model, ...opt });
     const invalid = validatePlanInput(input);
     if (invalid) { setNotice({ type: "error", text: invalid }); return; }
 
@@ -68,7 +97,7 @@ export default function LessonPlanPage() {
       }
       setResult(data);
     } catch {
-      setNotice({ type: "error", text: "네트워크 오류예요." });
+      setNotice({ type: "error", text: "연결이 끊겼어요. 잠시 뒤 다시 시도해 주세요." });
     } finally {
       setBusy(false);
     }
@@ -130,28 +159,44 @@ export default function LessonPlanPage() {
               ))}
             </div>
 
-            <input
-              value={unit} onChange={(e) => setUnit(e.target.value)} maxLength={60}
-              placeholder="단원·주제 (예: 4단원 글쓴이의 주장)"
-              className="mt-3 w-full rounded-xl bg-[#f2f6fa] px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#0095da]/40"
-            />
-            <input
-              value={goal} onChange={(e) => setGoal(e.target.value)} maxLength={200}
-              placeholder="학습목표 (안 적으면 알아서 잡아줘요)"
-              className="mt-2 w-full rounded-xl bg-[#f2f6fa] px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#0095da]/40"
-            />
-
-            <p className="mt-3 text-xs font-bold text-[#0c4470]/40">수업모형</p>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {TEACHING_MODELS.map((m) => (
-                <button key={m.key} onClick={() => setModel(m.key)} className={chip(model === m.key)}>
-                  {m.label}
-                </button>
-              ))}
-            </div>
-            <p className="mt-1.5 text-[11px] text-[#0c4470]/45">
-              {TEACHING_MODELS.find((m) => m.key === model)?.steps}
-            </p>
+            {/* 실제 교과서 단원이 있으면 골라서 넣는다 — 자유 입력 오타로
+                근거를 못 쓰는 일을 없앤다. 직접 적고 싶으면 '직접 입력'. */}
+            {unitList.length > 0 ? (
+              <>
+                <p className="mt-3 text-xs font-bold text-[#0c4470]/40">
+                  단원 <span className="font-normal text-[#0c4470]/35">· 교과서 단원을 고르면 더 정확해요</span>
+                </p>
+                <div className="mt-2 flex flex-col gap-1">
+                  {unitList.map((u) => {
+                    const label = `${u.unitNo}. ${u.unit}`;
+                    return (
+                      <button key={`${u.term}-${u.unitNo}-${u.unit}`}
+                        onClick={() => setUnit(u.unit)}
+                        className={`rounded-lg px-3 py-2 text-left text-sm ${
+                          unit === u.unit ? "bg-[#0095da] font-bold text-white"
+                                          : "bg-[#f2f6fa] text-[#0c4470]/80"}`}>
+                        {label}
+                        <span className={`ml-1.5 text-[11px] ${unit === u.unit ? "text-white/70" : "text-[#0c4470]/35"}`}>
+                          {u.term}학기 · {u.totalPeriods}차시
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <input
+                  value={unitList.some((u) => u.unit === unit) ? "" : unit}
+                  onChange={(e) => setUnit(e.target.value)} maxLength={60}
+                  placeholder="목록에 없으면 직접 적어주세요"
+                  className="mt-1.5 w-full rounded-xl bg-[#f2f6fa] px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#0095da]/40"
+                />
+              </>
+            ) : (
+              <input
+                value={unit} onChange={(e) => setUnit(e.target.value)} maxLength={60}
+                placeholder="단원·주제 (예: 추론하며 읽어요)"
+                className="mt-3 w-full rounded-xl bg-[#f2f6fa] px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#0095da]/40"
+              />
+            )}
 
             <p className="mt-3 text-xs font-bold text-[#0c4470]/40">수업 시간</p>
             <div className="mt-2 flex gap-1.5">
@@ -161,6 +206,66 @@ export default function LessonPlanPage() {
                 </button>
               ))}
             </div>
+
+            {/* 여기까지가 필수. 이것만 채우면 바로 만들 수 있다.
+                아래는 접어 둔다 — 옵션이 늘어서 첫 화면이 길어지면 안 쓴다. */}
+            <button
+              onClick={() => setShowMore((v) => !v)}
+              className="mt-3 flex w-full items-center justify-between rounded-xl bg-[#f2f6fa] px-3 py-2.5 text-left">
+              <span className="text-xs font-bold text-[#0c4470]/60">
+                더 자세히 정하기
+                {filledCount > 0 && (
+                  <span className="ml-1.5 rounded-full bg-[#0095da] px-1.5 py-0.5 text-[10px] text-white">
+                    {filledCount}
+                  </span>
+                )}
+              </span>
+              <span className="text-xs text-[#0c4470]/40">{showMore ? "접기" : "펼치기"}</span>
+            </button>
+
+            {showMore && (
+              <div className="mt-2 rounded-xl border border-[#f2f6fa] p-3">
+                <p className="text-[11px] text-[#0c4470]/45">
+                  안 채워도 됩니다. 채우면 더 맞는 지도안이 나와요.
+                </p>
+
+                <p className="mt-3 text-xs font-bold text-[#0c4470]/40">
+                  수업모형
+                  {!model && (
+                    <span className="ml-1.5 font-normal text-[#0c4470]/35">
+                      · 안 고르면 {TEACHING_MODELS.find((m) => m.key === effectiveModel)?.label}으로 잡아요
+                    </span>
+                  )}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {TEACHING_MODELS.map((m) => (
+                    <button key={m.key}
+                      onClick={() => setModel(model === m.key ? "" : m.key)}
+                      className={chip(model === m.key)}>
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1.5 text-[11px] text-[#0c4470]/45">
+                  {TEACHING_MODELS.find((m) => m.key === effectiveModel)?.steps}
+                </p>
+
+                {[
+                  { k: "goal", ph: "학습목표 (안 적으면 알아서 잡아줘요)" },
+                  { k: "learners", ph: "학습자 특성 (예: 수준차가 크고 발표를 꺼려요)" },
+                  { k: "focus", ph: "중점을 둘 활동 (예: 모둠 토의를 길게)" },
+                  { k: "materials", ph: "쓸 수 있는 기자재 (예: 실물화상기, 태블릿 없음)" },
+                  { k: "evaluation", ph: "평가 방식 (예: 관찰 평가 위주)" },
+                  { k: "request", ph: "지도교사 요구사항 (예: 판서 계획을 꼭 넣을 것)" },
+                ].map(({ k, ph }) => (
+                  <input key={k}
+                    value={opt[k]} onChange={(e) => setOptField(k, e.target.value)}
+                    maxLength={OPTIONAL_LIMITS[k]} placeholder={ph}
+                    className="mt-2 w-full rounded-xl bg-[#f2f6fa] px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#0095da]/40"
+                  />
+                ))}
+              </div>
+            )}
 
             {notice && (
               <p className={`mt-3 text-xs ${notice.type === "ok" ? "text-[#1c7a4a]" : "text-[#c0392b]"}`}>
@@ -182,10 +287,20 @@ export default function LessonPlanPage() {
                 </p>
                 <button onClick={copyResult} className="text-xs font-bold text-[#0095da]">복사</button>
               </div>
+              {/* 잘린 결과를 완성본처럼 보여주지 않는다 — 실습 제출물이라
+                  모르고 그대로 내면 사용자가 손해를 본다. */}
+              {result.truncated && (
+                <div className="mt-2 rounded-xl bg-[#fdecea] px-3 py-2">
+                  <p className="text-[11px] font-bold leading-relaxed text-[#c0392b]">
+                    분량 한도에 걸려 뒷부분이 잘렸어요. 다시 만들거나 단원·주제를
+                    좁혀서 시도해 주세요.
+                  </p>
+                </div>
+              )}
               <div className="mt-2 rounded-xl bg-[#fff8e5] px-3 py-2">
                 <p className="text-[11px] leading-relaxed text-[#8a6d00]">
-                  ⚠️ {result.notice} 성취기준 코드와 차시 배당은 교과서·교육과정을 직접
-                  확인해 주세요. 그대로 제출하면 실습 평가에 불리할 수 있어요.
+                  ⚠️ AI 가 만든 초안이에요. 성취기준 코드와 차시 배당은 교과서·교육과정을
+                  직접 확인해 주세요. 그대로 제출하면 실습 평가에 불리할 수 있어요.
                 </p>
               </div>
               <pre className="mt-2 max-h-[60vh] overflow-auto whitespace-pre-wrap break-words text-[13px] leading-relaxed text-[#0c4470]">

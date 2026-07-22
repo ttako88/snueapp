@@ -38,6 +38,25 @@ test("검색어: 교수명으로도 찾아짐", () => {
   assert.equal(searchCourses(ROWS, { q: "박교수" }).length, 1);
 });
 
+test("초성 검색: 과목명 초성이 잡힌다", () => {
+  // ⚠️ ROWS 의 기본 교수명이 '김교수'(ㄱㅇㄱㅅ)라 'ㄱㅇ' 는 교수명에도 걸린다.
+  //   과목명 초성만 검증하려면 교수 초성과 겹치지 않는 질의를 써야 한다.
+  //   'ㅅㅎ' → 수학교육론(과목) 하나. 교수명 초성엔 'ㅅㅎ' 연속이 없다.
+  assert.equal(searchCourses(ROWS, { q: "ㅅㅎ" }).length, 1, "ㅅㅎ → 수학교육론");
+  // 'ㄱㅇ' 는 과목(국어교육론 2) + 교수명 김교수까지 잡아 3건.
+  assert.equal(searchCourses(ROWS, { q: "ㄱㅇ" }).length, 3, "과목명·교수명 초성 둘 다");
+});
+
+test("초성 검색: 교수명 초성도 동작", () => {
+  // 전성은 → ㅈㅅㅇ
+  assert.equal(searchCourses(ROWS, { q: "ㅈㅅㅇ" }).length, 1);
+});
+
+test("초성 검색: 완성형이 섞이면 초성검색을 하지 않는다", () => {
+  // 'ㄱ어' 는 어중간한 입력 — 초성으로 치지 않고 일반 부분일치(0건)
+  assert.equal(searchCourses(ROWS, { q: "ㄱ어" }).length, 0);
+});
+
 test("필터: 학기·유형·학년·학과·요일", () => {
   assert.equal(searchCourses(ROWS, { semester: "2026-1" }).length, 1);
   assert.equal(searchCourses(ROWS, { type: "교양" }).length, 1);

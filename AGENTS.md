@@ -5,8 +5,10 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 # 프로젝트 현재 상태
 
-새 세션은 먼저 `docs/CURRENT_STATE.md`를 읽을 것 — 진행 단계(Gate), 코드 경계,
-운영/개발 Supabase 구분, 절대 규칙(운영 DB 초기화 금지 등)이 정리되어 있다.
+**새 세션은 먼저 `docs/SESSION_HANDOFF_2026-07-22.md`를 읽을 것** — 직전 세션이
+길어져 끊고 넘어온 인수인계다. 승인 대기·미해결 결함·하지 말 것이 한 눈에 정리돼
+있고, 세부 문서로 가는 진입점이다. 그 다음 `docs/CURRENT_STATE.md` — 진행 단계(Gate),
+코드 경계, 운영/개발 Supabase 구분, 절대 규칙(운영 DB 초기화 금지 등).
 커뮤니티 전환의 설계 기준은 `docs/ARCHITECTURE_AUDIT_PHASE1.md` (승인본).
 
 **지금 무엇이 어떤 상태인지는 `docs/COLLAB_STATE.md`가 원본이다.** 동결된 데이터,

@@ -1,5 +1,7 @@
 // ============================================================
-// diag-signup-path.mjs — 실제 가입 경로 검증 (GoTrue → 트리거 → members)
+// mutate-signup-path.mjs — 실제 가입 경로 검증 (GoTrue → 트리거 → members)
+//   ⚠️ 운영 데이터를 **영구히 바꾼다** (auth.users UPDATE + 실제 가입 생성).
+//      이름을 diag- 에서 mutate- 로 바꾼 이유가 이것이다.
 // ============================================================
 // 왜 필요한가
 //   앞선 스모크는 SQL 로 auth.users 에 직접 넣어 트리거를 postgres 권한으로
@@ -18,11 +20,29 @@
 // GoTrue 는 그 컬럼들을 non-nullable 문자열로 읽어서 NULL 이면
 // "Database error querying schema" 로 죽는다.
 // ============================================================
+// ⚠️⚠️ 이 도구는 이름과 달리 **운영 데이터를 영구히 바꾼다.** ⚠️⚠️
+//   · auth.users 를 UPDATE 한다 (트랜잭션·롤백 없음)
+//   · GoTrue /signup 으로 **진짜 계정을 만든다**
+//   `diag-` 접두사가 읽기 전용으로 오인되게 한다는 지적이 COLLAB_STATE 에
+//   실측으로 기록됐다(2026-07-22). 이름만 바꾸면 라벨일 뿐이라, **기계적으로**
+//   막는다: 명시 플래그 없이는 실행을 거부한다.
 import pg from "pg";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { readProdEnv, assertProdUrl, scrub } from "./prod-url.mjs";
+
+if (!process.argv.includes("--i-understand-this-writes-prod")) {
+  console.error(`
+[중단] 이 도구는 운영 데이터를 영구히 바꿉니다 (auth.users UPDATE + 실제 가입 생성).
+        이름의 'diag-' 는 오해를 부릅니다 — 읽기 전용이 아닙니다.
+        정말 실행하려면 다음 플래그를 붙이세요:
+
+          node scripts/manual/diag-signup-path.mjs --i-understand-this-writes-prod
+
+        만든 표식 계정은 나중에 prod-smoke-account.mjs --drop 으로 지웁니다.`);
+  process.exit(2);
+}
 
 const env = readFileSync(join(process.cwd(), ".env.local"), "utf8");
 const pick = (k) => (new RegExp(`^${k}=(.*)$`, "m").exec(env) || [])[1]?.trim();

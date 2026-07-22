@@ -77,14 +77,20 @@ export function buildStagingPath(memberId) {
 }
 
 /**
- * 검증 완료(verified) 경로. request id 로 결정론적으로 만든다 — finalize 가
- * 중간에 끊겨 재시도되어도 같은 경로에 쓰므로 고아 객체가 늘지 않는다.
- * 경로를 추측할 수 있어도 문제되지 않는다: 버킷은 비공개이고
+ * 검증 완료(verified) 경로. request id **와 finalize 선점 토큰**으로 만든다.
+ *
+ * 토큰을 경로에 넣는 이유(GPT 020 BLOCKER 반영): 동시/재인수된 finalize 작업자가
+ * 각자 **자기 토큰 경로**에만 쓰게 해서, 지연된 stale 작업자의 늦은 write 가
+ * 승자의 정본 객체를 덮지 못하게 한다(claimant 별 immutable object). 결합 시점에
+ * DB 가 현재 토큰과 일치하는 경로만 정본으로 채택하고, 패배 경로는 고아로 남아
+ * 021 배치가 정리한다. 경로를 추측할 수 있어도 문제되지 않는다: 버킷은 비공개이고
  * storage.objects 정책이 0개라 접근은 서버 signed URL 로만 가능하다.
  */
-export function buildVerifiedPath(requestId) {
+export function buildVerifiedPath(requestId, claimToken) {
   if (!/^[1-9][0-9]*$/.test(String(requestId))) throw new Error("bad request id");
-  return `${VERIFIED_PREFIX}/${requestId}/document`;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(claimToken)))
+    throw new Error("bad claim token");
+  return `${VERIFIED_PREFIX}/${requestId}/${claimToken}/document`;
 }
 
 /**

@@ -1,5 +1,7 @@
 // ============================================================
-// diag-auth-role.mjs — GoTrue 로그인 실패 원인 진단 (ROLLBACK 종료)
+// mutate-auth-role.mjs — GoTrue 로그인 실패 원인 진단 (ROLLBACK 종료)
+//   ⚠️ ROLLBACK 으로 끝나지만 실행 중 auth.users UPDATE / SET ROLE 을 한다.
+//      이름을 diag- 에서 mutate- 로 바꾼 이유가 이것이다.
 // ============================================================
 // password grant 가 "Database error querying schema" 로 500 을 냈다.
 // GoTrue 는 supabase_auth_admin 역할로 접속하므로 그 역할을 흉내내
@@ -10,8 +12,22 @@
 //
 // 전 구간 단일 트랜잭션이며 ROLLBACK 으로 끝난다.
 // ============================================================
+// ⚠️ 이 도구는 ROLLBACK 으로 끝나므로 잔여물은 없지만, 실행 중에 auth.users 를
+//   UPDATE 하고 auth.sessions 에 INSERT 하며 SET ROLE 로 권한을 바꾼다.
+//   운영 DB 에 붙어 트랜잭션을 여는 것 자체가 가벼운 행위가 아니다.
+//   'diag-' 접두사가 읽기 전용으로 오인되지 않도록 실행 전 확인을 요구한다.
 import pg from "pg";
 import { readProdEnv, assertProdUrl, scrub } from "./prod-url.mjs";
+
+if (!process.argv.includes("--i-understand-this-touches-prod")) {
+  console.error(`
+[중단] 이 도구는 운영 DB 에 트랜잭션을 열어 auth.users UPDATE / auth.sessions
+        INSERT / SET ROLE 을 수행합니다(끝에 ROLLBACK). 읽기 전용이 아닙니다.
+        실행하려면:
+
+          node scripts/manual/diag-auth-role.mjs --i-understand-this-touches-prod`);
+  process.exit(2);
+}
 
 const { PROD_DB_URL: url } = readProdEnv(["PROD_DB_URL"]);
 assertProdUrl(url, "PROD_DB_URL");

@@ -11,7 +11,11 @@
     "verify:setup": "node scripts/manual/setup-verify-secret.mjs",
     "verify:ready": "node scripts/manual/diag-verification-ready.mjs",
     "verify:e2e": "node scripts/manual/verify-e2e-smoke.mjs",
-    "setup": "node scripts/manual/setup-wizard.mjs"
+    "setup": "node scripts/manual/setup-wizard.mjs",
+    "setup:gemini": "node scripts/manual/setup-wizard.mjs GEMINI",
+    "lesson:samples": "node scripts/manual/gen-lesson-samples.mjs",
+    "lesson:check": "node scripts/manual/lesson-check.mjs",
+    "lesson:test": "node scripts/manual/test-lesson-data.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.7",

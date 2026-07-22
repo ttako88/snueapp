@@ -32,27 +32,37 @@ test("staging 소유 판정은 구분자까지 본다", () => {
   assert.ok(!isOwnStagingPath(`staging/${shortId}/x`, UID));
 });
 
+const TOKEN = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+const TOKEN2 = "12345678-1234-1234-1234-123456789abc";
+
 test("verified 경로는 staging 으로 오인되지 않는다 (그 반대도)", () => {
-  const v = buildVerifiedPath("42");
+  const v = buildVerifiedPath("42", TOKEN);
   assert.ok(isVerifiedPath(v));
   assert.ok(!isOwnStagingPath(v, UID), "verified 를 staging 으로 보면 TOCTOU 가 열린다");
   const s = buildStagingPath(UID);
   assert.ok(!isVerifiedPath(s), "staging 을 정본으로 보면 미검증 파일을 심사자에게 연다");
 });
 
-test("verified 경로는 request id 로 결정론적이다", () => {
-  // 재시도가 같은 자리에 쓰도록 — 아니면 finalize 를 재시도할 때마다
-  // 고아 객체가 하나씩 쌓인다.
-  assert.equal(buildVerifiedPath("42"), buildVerifiedPath("42"));
-  assert.notEqual(buildVerifiedPath("42"), buildVerifiedPath("43"));
+test("verified 경로는 (id, 선점토큰) 으로 유일하다 — claimant 별 격리", () => {
+  // 토큰을 경로에 넣어 지연된 stale 작업자의 늦은 write 가 승자의 정본을 덮지
+  // 못하게 한다(GPT 020 BLOCKER 반영). 같은 (id,token)=같은 경로, 토큰 다르면 다른 경로.
+  assert.equal(buildVerifiedPath("42", TOKEN), buildVerifiedPath("42", TOKEN));
+  assert.notEqual(buildVerifiedPath("42", TOKEN), buildVerifiedPath("42", TOKEN2));
+  assert.notEqual(buildVerifiedPath("42", TOKEN), buildVerifiedPath("43", TOKEN));
+  assert.equal(buildVerifiedPath("42", TOKEN), `verified/42/${TOKEN}/document`);
 });
 
 test("경로 생성은 잘못된 식별자를 거부한다", () => {
   assert.throws(() => buildStagingPath("../../etc/passwd"));
   assert.throws(() => buildStagingPath(""));
-  assert.throws(() => buildVerifiedPath("0"));
-  assert.throws(() => buildVerifiedPath("1; drop table"));
-  assert.throws(() => buildVerifiedPath(""));
+  assert.throws(() => buildVerifiedPath("0", TOKEN));
+  assert.throws(() => buildVerifiedPath("1; drop table", TOKEN));
+  assert.throws(() => buildVerifiedPath("", TOKEN));
+  // 토큰도 검증한다 — 경로 조작·주입 방지
+  assert.throws(() => buildVerifiedPath("42", "not-a-uuid"));
+  assert.throws(() => buildVerifiedPath("42", "../evil"));
+  assert.throws(() => buildVerifiedPath("42", ""));
+  assert.throws(() => buildVerifiedPath("42", undefined));
 });
 
 // ── magic bytes ──────────────────────────────────────────────

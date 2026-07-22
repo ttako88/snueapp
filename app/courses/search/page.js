@@ -110,7 +110,7 @@ export default function CourseSearchPage() {
       <input
         value={q}
         onChange={(e) => setQ(e.target.value)}
-        placeholder="과목명 또는 교수명 (예: 국어교육론, 김철수)"
+        placeholder="과목·교수명, 초성도 돼요 (예: 국어교육론, ㄱㅇㄱㅇ)"
         className="w-full rounded-xl border border-black/10 bg-white px-3.5 py-2.5 text-sm text-[#0c4470] outline-none placeholder:text-[#0c4470]/35 focus:border-[#0095da]"
       />
 

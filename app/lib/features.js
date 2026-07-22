@@ -77,6 +77,26 @@ export const FEATURES = {
     requires: "Gate 4a 운영배포 완료",
   },
 
+  aiCreditCharge: {
+    enabled: false,
+    label: "지도안 생성 SR 차감",
+    summary: "약안 −10 SR / 세안 −25 SR. 끄면 로그인만 하면 무제한이다",
+    needsDb: true,
+    // ⚠️ 이 flag 가 OFF 면 개인별 제한이 **없다**. 018 의 일일 예산 상한은
+    //    "소유자 지갑이 하루에 얼마까지 나가는가" 만 정하므로, 한 계정이
+    //    하루치를 통째로 소진하면 나머지 전원이 못 쓴다.
+    requires: "022_currency_split.sql → 023_ai_credit_charge.sql 순서로 적용",
+  },
+  practicumPlacement: {
+    enabled: false,
+    label: "학기별 실습학교",
+    summary: "2-1~4-1 다섯 학기 실습학교 설정. 학교별 게시판 진입 조건이 된다",
+    needsDb: true,
+    // ⚠️ 019 를 적용하지 않고 켜면 화면은 뜨지만 저장이 전부 실패한다.
+    //    학교 목록은 앱 데이터(practicumSchools.json)라 DB 없이도 그려진다.
+    requires: "supabase/migrations/pending/019_practicum_placement.sql 적용",
+  },
+
   // ── 계정 ──
   socialLogin: {
     enabled: false,

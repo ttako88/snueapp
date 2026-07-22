@@ -45,7 +45,10 @@ export class AiKeyMissing extends Error {
  * 공통 호출 인터페이스.
  * @returns {{ text: string, inTokens: number, outTokens: number }}
  */
-export async function generate({ model, system, prompt, maxOutTokens = 4000 }, env = process.env) {
+export async function generate(
+  { model, system, prompt, maxOutTokens = 4000, thinkBudget = null },
+  env = process.env,
+) {
   if (!MODELS[model]) throw new Error(`알 수 없는 모델: ${model}`);
 
   if (model.startsWith("gemini-")) {
@@ -61,7 +64,14 @@ export async function generate({ model, system, prompt, maxOutTokens = 4000 }, e
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: system }] },
           contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { maxOutputTokens: maxOutTokens, temperature: 0.4 },
+          generationConfig: {
+            maxOutputTokens: maxOutTokens, temperature: 0.4,
+            // 생각 토큰 상한. 지정하면 생각이 줄어 원가가 내려가지만 품질이
+            // 같이 내려가는지는 **실측 전까지 모른다** — A/B 로만 판단한다.
+            // ⚠️ 이 모델은 thinkingBudget:0 을 400 으로 거부한다(실측 07-22).
+            //    "생각 끄기" 는 선택지가 아니다.
+            ...(thinkBudget ? { thinkingConfig: { thinkingBudget: thinkBudget } } : {}),
+          },
         }),
       });
     if (!res.ok) {
@@ -73,10 +83,24 @@ export async function generate({ model, system, prompt, maxOutTokens = 4000 }, e
       throw new Error(`gemini ${res.status}${msg ? `: ${msg}` : ""}`);
     }
     const j = await res.json();
+    const u = j?.usageMetadata ?? {};
+    // ⚠️ 추론 모델은 **생각 토큰(thoughtsTokenCount)도 출력으로 과금된다.**
+    //   `candidatesTokenCount` 만 세면 실제보다 싸게 계산되고, 그만큼
+    //   일일 상한이 조용히 샌다 — budget.mjs 가 보장한다고 적어 둔 불변식이
+    //   깨진다. 실측(2026-07-22, gemini-3.6-flash): 생각 1,352 / 본문 844.
+    //   **청구 기준 출력 = 생각 + 본문** 이다.
+    const thinkTokens = u.thoughtsTokenCount ?? 0;
+    const bodyTokens = u.candidatesTokenCount ?? 0;
     return {
       text: j?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") ?? "",
-      inTokens: j?.usageMetadata?.promptTokenCount ?? 0,
-      outTokens: j?.usageMetadata?.candidatesTokenCount ?? 0,
+      inTokens: u.promptTokenCount ?? 0,
+      outTokens: thinkTokens + bodyTokens,
+      thinkTokens,
+      bodyTokens,
+      // MAX_TOKENS 면 본문이 문장 중간에서 잘렸다는 뜻이다. 호출부가 이걸 보고
+      // 사용자에게 알리거나 재시도할 수 있어야 한다 — 잘린 지도안을 완성본인
+      // 것처럼 건네지 않는다.
+      truncated: j?.candidates?.[0]?.finishReason === "MAX_TOKENS",
       // 별칭이 실제로 어떤 모델을 가리켰는지 기록한다. 별칭이 옮겨가면
       // 단가·품질이 조용히 바뀌므로 이 값이 달라지는 것을 신호로 삼는다.
       resolvedModel: j?.modelVersion ?? null,

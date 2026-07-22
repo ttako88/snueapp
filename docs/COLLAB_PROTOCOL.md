@@ -159,7 +159,7 @@ containment 범위가 없으면 **현재의 안전 상태를 유지한 채** 알
 **`PROCEDURAL_ONLY` 를 "기계적으로 강제됨" 이라고 보고하지 않는다.**
 
 **이름은 안전 속성이 아니다.** 2026-07-22 실측: `diag-` 로 시작하는 도구 셋
-(`diag-auth-role`, `diag-signup-path`, `diag-orphan-users`)이 실제로는 운영
+(`mutate-auth-role`, `mutate-signup-path`, `diag-orphan-users`)이 실제로는 운영
 `auth.users` 를 UPDATE 하는 쓰기 도구였다. 이름만 보고 읽기 전용이라 단정해
 읽기 잠금을 걸었다가 도구를 깨뜨릴 뻔했다. 접두사·파일명·주석이 아니라
 **연결 시점에 의도를 선언**하게 한다 (`connectProd({ write, reason })`).

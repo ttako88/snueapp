@@ -127,11 +127,20 @@ console.log(`
   ${mark(prod.PROD_DB_URL)} 운영 DB 주소         ${mark(prod.SUPABASE_ACCESS_TOKEN)} Supabase 관리 토큰
   ${mark(prod.VERCEL_TOKEN)} Vercel 토큰          ${mark(prod.GITHUB_TOKEN)} GitHub 토큰
   ${mark(prod.KAKAO_REST_API_KEY)} 카카오 키            ${mark(prod.GOOGLE_CLIENT_ID)} 구글 키
-  ${mark(prod.OWNER_REAL_NAME)} 실명                 ${mark(prod.OWNER_STUDENT_NO_HMAC)} 학번(암호화)
+  ${mark(local.GEMINI_API_KEY)} 제미나이 키          ${mark(prod.OWNER_REAL_NAME)} 실명
+  ${mark(prod.OWNER_STUDENT_NO_HMAC)} 학번(암호화)
 `);
 
 // ── 공통: 값 하나 받기 ───────────────────────────────────────
+// 한 항목만 고치려고 12번 엔터를 치게 만들면 안 쓴다.
+//   npm run setup gemini   → GEMINI_API_KEY 만 묻는다
+//   npm run setup vercel   → 이름에 VERCEL 이 든 항목만
+const ONLY = (process.argv[2] ?? "").toUpperCase();
+const skip = (key) => ONLY && !key.includes(ONLY);
+const banner = (s) => { if (!ONLY) console.log(s); };
+
 async function collect({ key, label, where, note, store, target, validate }) {
+  if (skip(key)) return;
   const cur = store[key];
   console.log(`\n${label}${cur ? "   [이미 등록됨 — 엔터=유지]" : ""}`);
   if (where) console.log(`   받는 곳: ${where}`);
@@ -147,8 +156,8 @@ async function collect({ key, label, where, note, store, target, validate }) {
 }
 
 // ══ 1. Supabase ═════════════════════════════════════════════
-console.log(`
-━━ 1 / 5  Supabase ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+banner(`
+━━ 1 / 6  Supabase ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
 await collect({
   key: "SUPABASE_SECRET_KEY", store: local, target: toLocal,
@@ -166,8 +175,8 @@ await collect({
 });
 
 // ══ 2. Vercel ═══════════════════════════════════════════════
-console.log(`
-━━ 2 / 5  Vercel  (배포·환경변수·롤백을 제가 처리하게 됩니다) ━━━`);
+banner(`
+━━ 2 / 6  Vercel  (배포·환경변수·롤백을 제가 처리하게 됩니다) ━━━`);
 
 await collect({
   key: "VERCEL_TOKEN", store: prod, target: toProd,
@@ -187,8 +196,8 @@ await collect({
 });
 
 // ══ 3. GitHub ═══════════════════════════════════════════════
-console.log(`
-━━ 3 / 5  GitHub  (푸시·PR) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+banner(`
+━━ 3 / 6  GitHub  (푸시·PR) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
 await collect({
   key: "GITHUB_TOKEN", store: prod, target: toProd,
@@ -198,8 +207,8 @@ await collect({
 });
 
 // ══ 4. 소셜 로그인 ═══════════════════════════════════════════
-console.log(`
-━━ 4 / 5  소셜 로그인  (지금 몰라도 됩니다 — 나중에 다시 실행) ━━`);
+banner(`
+━━ 4 / 6  소셜 로그인  (지금 몰라도 됩니다 — 나중에 다시 실행) ━━`);
 
 await collect({
   key: "KAKAO_REST_API_KEY", store: prod, target: toProd,
@@ -223,18 +232,46 @@ await collect({
   where: "위와 같은 화면",
 });
 
-// ══ 5. 관리자 신원 ═══════════════════════════════════════════
-console.log(`
-━━ 5 / 5  관리자 계정 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+// ══ 5. AI ═══════════════════════════════════════════════════
+// 이 항목은 처음에 빠져 있었다. 위저드가 12항목이라 다 넣은 줄 알았는데
+// 정작 지도안 생성기가 쓰는 키가 없었다. 목록을 세지 말고 기능에서 역산할 것.
+banner(`
+━━ 5 / 6  AI  (수업지도안 생성기) ━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
-console.log(`\n⑪ 실명  (운영에서 상호님 계정을 owner 로 올릴 때만 씁니다)${
-  prod.OWNER_REAL_NAME ? "   [이미 등록됨 — 엔터=유지]" : ""}`);
-const realName = await ask("   > ", { masked: false });
+await collect({
+  key: "GEMINI_API_KEY", store: local, target: toLocal,
+  label: "⑪ 제미나이 API 키  (이게 없으면 지도안 생성이 동작하지 않습니다)",
+  where: "aistudio.google.com/apikey → API 키 만들기",
+  note: "등록 후 `npm run lesson:samples` 를 돌리면 바탕화면\n   클로드/지도안_출력물/ 폴더에 샘플 지도안이 저장됩니다.\n   일일 비용 상한이 걸려 있습니다 (기본 5,000원)",
+  // ⚠️ 접두사로 거르지 않는다. 처음에 `AIza` 만 통과시켰다가 소유자의 실제 키
+  //   (`AQ.` 로 시작)를 거부했다. 구글이 키 형식을 바꿔도 이 파일은 모른다.
+  //   형식 추측으로 정상 입력을 막느니, 길이만 보고 받은 뒤 **실제 호출로**
+  //   맞는지 확인하는 편이 옳다 (저장 직후 검증이 돈다).
+  validate: (v) => v.length < 20 ? "너무 짧습니다 — 키가 잘려서 붙여넣어진 것 같습니다"
+    : /\s/.test(v) ? "공백이 섞여 있습니다" : null,
+});
+
+// ══ 6. 관리자 신원 ═══════════════════════════════════════════
+// 이 둘은 collect() 를 안 쓰므로 필터를 직접 건다.
+const askOwner = !skip("OWNER_REAL_NAME");
+const askStudent = !skip("OWNER_STUDENT_NO_HMAC");
+if (askOwner || askStudent) banner(`
+━━ 6 / 6  관리자 계정 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+
+let realName = "";
+if (askOwner) {
+  console.log(`\n⑫ 실명  (운영에서 상호님 계정을 owner 로 올릴 때만 씁니다)${
+    prod.OWNER_REAL_NAME ? "   [이미 등록됨 — 엔터=유지]" : ""}`);
+  realName = await ask("   > ", { masked: false });
+}
 if (realName) toProd.OWNER_REAL_NAME = realName;
 
-console.log(`\n⑫ 학번 8자리${prod.OWNER_STUDENT_NO_HMAC ? "   [이미 등록됨 — 엔터=유지]" : ""}
+let studentNo = "";
+if (askStudent) {
+  console.log(`\n⑬ 학번 8자리${prod.OWNER_STUDENT_NO_HMAC ? "   [이미 등록됨 — 엔터=유지]" : ""}
    넣는 즉시 되돌릴 수 없는 값으로 바꾸고 원문은 버립니다`);
-const studentNo = await ask("   > ");
+  studentNo = await ask("   > ");
+}
 if (studentNo) {
   const norm = studentNo.replace(/[\s-]/g, "");
   if (!/^\d{8}$/.test(norm)) {
@@ -279,6 +316,35 @@ if (secret && url) {
     canary = probe.error ? `실패 — ${probe.error.message || probe.error.name}` : "정상";
   } catch (e) { canary = `확인 못 함 (${e.message})`; }
   console.log(canary);
+}
+
+// ══ 제미나이 키 실동작 확인 ══════════════════════════════════
+// 접두사 검사를 없앤 대신 여기서 **실제로 호출해** 맞는지 본다.
+// 형식 추측보다 이쪽이 정확하고, 틀린 키를 조용히 저장하는 일도 없다.
+const gkey = toLocal.GEMINI_API_KEY || local.GEMINI_API_KEY;
+if (gkey && !skip("GEMINI_API_KEY")) {
+  stdout.write("\n제미나이 키 실동작 확인 중… ");
+  try {
+    const r = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
+      { method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": gkey },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: "안녕" }] }],
+          generationConfig: { maxOutputTokens: 8 },
+        }) });
+    if (r.ok) {
+      const j = await r.json();
+      console.log(`정상 (응답 모델: ${j?.modelVersion ?? "미상"})`);
+      console.log("   → `npm run lesson:samples` 로 지도안 샘플을 뽑을 수 있습니다.");
+    } else {
+      // 키를 지우지는 않는다. 소유자가 값을 다시 찾아오게 만드는 비용이 더 크다.
+      const t = await r.text().catch(() => "");
+      let m = ""; try { m = JSON.parse(t)?.error?.message ?? ""; } catch { m = t.slice(0, 120); }
+      console.log(`실패 — ${r.status}${m ? `: ${m}` : ""}`);
+      console.log("   저장은 해 뒀습니다. 키가 맞는지 확인 후 다시 실행해 주세요.");
+    }
+  } catch (e) { console.log(`확인 못 함 (${e.message}) — 네트워크 문제일 수 있습니다.`); }
 }
 
 // ══ Vercel 붙여넣기 파일 ═════════════════════════════════════

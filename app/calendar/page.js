@@ -447,13 +447,23 @@ export default function CalendarPage() {
                   const inMonth = d.getMonth() === cursor.getMonth();
                   const isToday = ds === todayStr;
                   const isSelected = ds === selected;
+                  // 스크린리더는 숫자만으로 이 버튼을 못 읽는다. 요일·오늘 여부·
+                  // 그날 일정 수를 이름에 담는다. (di 는 0=일 … 6=토)
+                  const dayCount = eventsOn(ds).length;
+                  const label = `${d.getMonth() + 1}월 ${d.getDate()}일 ${WEEKDAYS[di]}요일`
+                    + (isToday ? " 오늘" : "")
+                    + (dayCount ? `, 일정 ${dayCount}건` : "");
                   return (
                     <button
                       key={di}
                       onClick={() => setSelected(ds)}
+                      aria-label={label}
+                      aria-current={isToday ? "date" : undefined}
+                      aria-pressed={isSelected}
                       className={`flex flex-col items-center pt-1 ${isSelected ? "rounded-lg bg-[#eaf6fd]" : ""}`}
                     >
                       <span
+                        aria-hidden="true"
                         className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${isToday ? "bg-[#0095da] text-white" : numColor(d, inMonth)}`}
                       >
                         {d.getDate()}

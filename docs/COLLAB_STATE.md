@@ -109,17 +109,59 @@ GPT 판정(P-20260722-ONE_SHOT_BOOTSTRAP_COMPLETENESS_REVIEW_01)은 다음이었
 | 인증 운영 E2E | `NOT_VERIFIED` | — | 시크릿 미등록 |
 | 과목 마스터 1,267건 | `FROZEN_IN_PLACE` / `NOT_ACCEPTED_AS_CANONICAL` | MEASURED (증거 패키지) | 추가 적재·prune·merge 금지 |
 | 강의평가 flag | **OFF (유지 필수)** | — | |
-| 016 마이그레이션 | `SQL_DRAFTED` + `DRY_RUN_VERIFIED` | MEASURED (예행적용 PASS, 함수 +4) | **APPLICATION AUTHORITY = NONE** |
 | 015 도메인 폐기 | `SQL_DRAFTED` | — | 인증 동작 전 적용 금지 |
 | §9 배치 4종 | `CODE_WRITTEN` (기존 구현) | MEASURED (RPC 12종 존재) | Cron 미활성 |
 | Cron | **비활성 (유지)** | — | 활성화는 소유자 승인 |
 
-## 소유자 승인 대기 (실행 금지)
+### pending 마이그레이션 (2026-07-22 야간 갱신)
 
-1. `SUPABASE_SECRET_KEY` 등록 — `npm run verify:setup` (TTY 전용, 소유자만 실행 가능)
-2. Vercel 환경변수 3종 등록
-3. Cron 활성화 · 고아 객체 실제 삭제 · purge 실행
-4. 016 적용 · 강의평가 flag 활성화
+누적 dry-run **PASS 7/7**, 롤백 후 운영 스키마 37/118/20/17 로 적용 전과 동일함을
+실측했다. **전부 `APPLICATION AUTHORITY = NONE`** — 적용은 소유자 승인 후.
+
+| 파일 | 상태 | 증거 | 비고 |
+|---|---|---|---|
+| 015 도메인 폐기 | `SQL_DRAFTED` | dry-run PASS | 낮에만. 야간 수정 금지 |
+| 016 강의평가 쓰기·조회 | `SQL_DRAFTED` + `DRY_RUN_VERIFIED` | 함수 +4 | **통계 결함 수정 포함**(아래) |
+| 019 실습학교 배정 | `SQL_DRAFTED` + `DRY_RUN_VERIFIED` | 테이블 +1 함수 +8 | 화면 있음, flag OFF |
+| 020 finalize claim | `SQL_DRAFTED` + `DRY_RUN_VERIFIED` | 테이블 +1 함수 +10 | ⚠️ **라우트가 이미 의존한다** |
+| 021 고아 탐지 RPC | `SQL_DRAFTED` + `DRY_RUN_VERIFIED` | 함수 +12 | 읽기 전용. 삭제 함수 없음 |
+| 022 화폐 분리 | `SQL_DRAFTED` + `DRY_RUN_VERIFIED` | 함수 +13 트리거 +1 | 유료 기능 0개인 지금이 최적기 |
+| 023 AI SR 차감 | `SQL_DRAFTED` + `DRY_RUN_VERIFIED` | 테이블 +2 함수 +15 | **022 뒤에** 적용. flag OFF |
+
+> ⚠️ **020 은 배포 순서가 걸려 있다.** `/api/verification/finalize` 가
+> `svc_claim_verification_finalize` 를 호출하도록 이미 고쳐져 있다.
+> **마이그레이션 → 배포** 순서를 어기면 학생 인증 제출이 전부 실패한다.
+> (2026-07-22 시점 커밋·배포 안 함. 작업 트리에만 있음.)
+
+> 023 은 022 의 `currency` 컬럼을 쓴다. **022 → 023** 순서 필수.
+
+## 소유자 승인 (2026-07-22 — AUTHORIZATION, 채팅 직접 발화)
+
+> **소유자가 2026-07-22 채팅에서 A~G 전부 명시 승인.** goal 모드로 실행 착수.
+> 이는 AUTHORIZATION 기록이다(재측정 대상 아님). 실행 절차·안전레일·진행상태는
+> `docs/GOAL_MODE_WORKORDER_2026-07-22.md`가 원본. 아래 표는 그 매핑.
+>
+> | 승인항목 | pending | 안전레일 |
+> |---|---|---|
+> | A 020→배포 | 020 | 적용 후 배포(순서 절대). GPT 검수 선행 |
+> | B 016 | 016 | 강의평가 flag OFF 유지 |
+> | C 019+flag | 019 | practicumPlacement ON |
+> | D 021 | 021 | 읽기전용, 삭제함수 없음 |
+> | E 022→023+flag | 022,023 | 022 먼저. aiCreditCharge ON |
+> | F 015 | 015 | **N3 — 소유자 입회, 마지막.** 자율 금지 |
+> | G 사업자등록 | — | 소유자 사업 판단(내 실행 아님) |
+>
+> **승인으로도 안 풀리는 것**: 시크릿 값 입력(§아래 1·2), GPT 검수는 적용 전,
+> F는 소유자 입회, 유료 v3 A/B는 별도 승인. flag는 코드(features.js)라 배포 동반.
+
+### 여전히 소유자 손이 필요 (승인과 무관하게 기계적으로 내가 못 함)
+
+1. `SUPABASE_SECRET_KEY` 등록 — `npm run verify:setup` (TTY 전용, 소유자만 실행 가능).
+   ※ 앱이 이미 live 이므로 A~E 엔 신규 시크릿 불요 추정 — Phase 0 에서 확인.
+2. Vercel 환경변수 등록(필요 시). 3. Cron 활성화 · 고아 객체 실제 삭제 · purge 실행.
+
+> A~G 실행 항목(020 적용·배포, 016/019/021/022/023 적용, flag)은 위 승인표로
+> 이관됨 — `GOAL_MODE_WORKORDER_2026-07-22.md` §4 가 실행 원본.
 
 ## 운영 변경 진입점 인벤토리 (READ-ONLY 조사, 2026-07-22)
 
@@ -173,8 +215,8 @@ GPT 판정(P-20260722-ONE_SHOT_BOOTSTRAP_COMPLETENESS_REVIEW_01)은 다음이었
 
 **⚠ 이름이 오도하는 도구 (2026-07-22 실측)** — 아래는 `diag-` 접두사이지만
 운영 데이터를 **쓴다**. 읽기 전용으로 오인하지 말 것.
-`diag-auth-role.mjs`(SET ROLE, 현재 권한 부족으로 실패) ·
-`diag-signup-path.mjs`(auth.users UPDATE) · `diag-orphan-users.mjs`
+`mutate-auth-role.mjs`(SET ROLE, 현재 권한 부족으로 실패) ·
+`mutate-signup-path.mjs`(auth.users UPDATE) · `diag-orphan-users.mjs`
 
 **핵심 판정:** 직접 SQL 은 `PROCEDURAL_ONLY` 다.
 `ROUTINE USE FORBIDDEN` / `BREAK_GLASS 설계 미착수`.
@@ -184,6 +226,8 @@ GPT 판정(P-20260722-ONE_SHOT_BOOTSTRAP_COMPLETENESS_REVIEW_01)은 다음이었
 
 | 결함 | 심각도 | 상태 |
 |---|---|---|
-| 동시 finalize 시 claim 전이·DB 락 부재 | NON_BLOCKING_DEFECT | 016 과 함께 검수 예정 |
-| 011 이 항목별 denominator 가 아니라 전체 k 로만 게이트 | NON_BLOCKING_DEFECT | 016 검수 항목 |
+| 동시 finalize 시 claim 전이·DB 락 부재 | NON_BLOCKING_DEFECT | **수정본 작성됨 → `pending/020`** (`SQL_DRAFTED`+`DRY_RUN_VERIFIED`). ⚠️ **재현 실증은 못 했다** — 운영 DB 에 인증 신청을 만들어야 해서 야간 범위 밖. 근거는 코드 분석뿐 |
+| 011 이 항목별 denominator 가 아니라 전체 k 로만 게이트 | NON_BLOCKING_DEFECT | **수정본 작성됨 → `pending/016` 안의 `course_review_stats` 교체** (`DRY_RUN_VERIFIED`). 응답 모양이 바뀐다(분포가 `items` 아래로) — flag 켜기 전 화면을 맞출 것 |
+| **지도안 생성이 SR 을 안 깎는다** | 신규 발견 2026-07-22 | 018 예산 상한은 "지갑 총액" 만 정한다. 개인별 제한이 없어 한 계정이 하루치(약 227건)를 소진 가능 → `pending/023` + `aiCreditCharge` flag (OFF) |
+| `/schedule` 라우트에 도달 경로 없음 | 사소 | `/calendar` 가 상위 호환으로 보이나 **삭제는 미판정**. 별도 작업으로 분리 |
 | 강의평가 자유서술·operator 승인 큐 없음 | 의도적 v1 제외 | GPT APPROVE |

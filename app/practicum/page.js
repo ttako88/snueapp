@@ -11,6 +11,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { isEnabled } from "../lib/features";
 import {
   SCHOOLS, findSchool, hasMeal,
   PRACTICUM_STAGES, PRACTICUM_TIMELINE, PRACTICUM_CHECKLIST,
@@ -19,6 +20,7 @@ import {
 
 const LS_SCHOOL = "snue.practicum.school";
 const LS_CHECKED = "snue.practicum.checked";
+const LS_MEAL = "snue.practicum.meal";   // 마지막 성공 급식 (오프라인 대비)
 
 function todayKST() {
   return new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });
@@ -47,8 +49,29 @@ export default function PracticumPage() {
     const ymd = todayKST().replaceAll("-", "");
     fetch(`/api/practicum/meal?school=${school.neisCode}&date=${ymd}`)
       .then((r) => r.json())
-      .then((d) => setMeal({ state: "done", data: d }))
-      .catch(() => setMeal({ state: "error", data: null }));
+      .then((d) => {
+        setMeal({ state: "done", data: d });
+        // 실제 급식이 있을 때만 캐시한다. 빈 응답(주말·오류)을 캐시하면
+        // 다음에 오프라인일 때 "급식 없음" 을 보여주게 된다.
+        if (d?.meals?.length) {
+          try {
+            localStorage.setItem(LS_MEAL,
+              JSON.stringify({ school: school.short, date: ymd, data: d }));
+          } catch {}
+        }
+      })
+      .catch(() => {
+        // 네트워크 실패. 마지막으로 성공한 같은 학교 급식이 있으면 보여준다 —
+        // 빈 화면보다 "며칠 전 급식" 이 낫고, 오래됨을 명시한다.
+        try {
+          const cached = JSON.parse(localStorage.getItem(LS_MEAL) || "null");
+          if (cached?.school === school.short && cached.data?.meals?.length) {
+            setMeal({ state: "stale", data: cached.data, cachedDate: cached.date });
+            return;
+          }
+        } catch {}
+        setMeal({ state: "error", data: null });
+      });
   }, [school]);
 
   function pick(s) {
@@ -103,6 +126,20 @@ export default function PracticumPage() {
               고르면 급식·연락처·위치가 여기 붙어요
             </p>
           </button>
+        )}
+
+        {/* 학기별 배정 설정으로 가는 길. flag 가 꺼져 있으면 "준비 중" 화면만
+            나오므로 링크 자체를 감춘다 — 눌러서 막다른 길에 닿게 하지 않는다.
+            여기 고르는 학교는 급식·연락처를 보려는 **임시 선택**이고,
+            게시판 진입 조건이 되는 배정은 학기별로 따로 저장한다. */}
+        {isEnabled("practicumPlacement") && !picking && (
+          <Link href="/practicum/placement"
+            className="mt-3 flex items-center justify-between border-t border-black/5 pt-3">
+            <span className="text-[11px] text-[#0c4470]/45">
+              학기별 실습학교 설정하기
+            </span>
+            <span className="text-[11px] font-bold text-[#0095da]">2-1 ~ 4-1 ›</span>
+          </Link>
         )}
 
         {picking && (
@@ -178,12 +215,26 @@ export default function PracticumPage() {
           {meal.state === "error" && (
             <p className="py-4 text-center text-xs text-[#c0392b]">급식을 불러오지 못했어요</p>
           )}
+          {meal.state === "stale" && (
+            <div className="mt-1 rounded-lg bg-[#fff8e5] px-3 py-2">
+              <p className="text-[11px] text-[#8a6d00]">
+                지금 연결이 안 돼서 지난번에 본 급식을 보여드려요
+                {meal.cachedDate && ` (${meal.cachedDate.slice(4, 6)}/${meal.cachedDate.slice(6, 8)} 기준)`}
+              </p>
+            </div>
+          )}
           {meal.state === "done" && meal.data?.meals?.length === 0 && (
             <p className="py-4 text-center text-xs text-[#0c4470]/35">
-              {meal.data.reason === "no_meal" ? "오늘은 급식이 없어요" : "급식 정보를 못 받았어요"}
+              {/* 주말은 계산으로 확정된 사실이라 그대로 말한다. 평일인데 없으면
+                  휴업일·재량휴업 등인데 그건 구별할 방법이 없으므로 단정하지
+                  않는다 — "방학이라" 라고 쓰면 틀린 날이 생긴다(방학에도
+                  급식을 하는 학교가 있다, 실측 2026-07-22). */}
+              {meal.data.reason !== "no_meal" ? "급식 정보를 못 받았어요"
+                : meal.data.weekend ? "주말이라 급식이 없어요"
+                : "오늘은 급식이 없어요"}
             </p>
           )}
-          {meal.state === "done" && meal.data?.meals?.map((m, i) => (
+          {(meal.state === "done" || meal.state === "stale") && meal.data?.meals?.map((m, i) => (
             <div key={i} className="mt-2">
               <div className="flex items-baseline justify-between">
                 <p className="text-sm font-bold text-[#0c4470]">{m.type}</p>

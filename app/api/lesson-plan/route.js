@@ -8,60 +8,31 @@
 // 호출하지 않는다(fail-closed) — 확인 못 한 채 돈 쓰는 경로를 만들면
 // 상한 장치가 있으나 마나다.
 import { NextResponse } from "next/server";
+import { isEnabled } from "../../lib/features";
 import { serviceClient, requireUser, NO_STORE } from "../../lib/server/verification/auth.mjs";
 import {
   DEFAULT_MODEL, MODELS, maxCostKrw, clampPrompt, reserve, settle, release,
 } from "../../lib/server/ai/budget.mjs";
 import { generate, AiKeyMissing, availableProviders } from "../../lib/server/ai/provider.mjs";
-import {
-  validatePlanInput, PLAN_TYPES, TEACHING_MODELS,
-} from "../../lib/lessonPlan";
+import { validatePlanInput, withDefaults, PLAN_TYPES } from "../../lib/lessonPlan";
+// 프롬프트는 여기서 만들지 않는다. 예전에 이 파일과 샘플 스크립트에 **각각**
+// 복사돼 있어서, 샘플로 품질을 튜닝해도 앱에는 반영되지 않았다.
+import { buildLessonPrompt } from "../../lib/server/ai/lessonPrompt.mjs";
+import { loadAll } from "../../lib/server/ai/lessonData.mjs";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const json = (body, status) => NextResponse.json(body, { status, headers: NO_STORE });
 
-const SYSTEM = `당신은 대한민국 초등학교 교사입니다. 2022 개정 교육과정에 따라
-초등 수업지도안을 작성합니다.
-
-지켜야 할 것:
-- 초등학생 발달 수준에 맞는 표현을 씁니다. 중·고등학교 수업이 아닙니다.
-- 발문(교사의 질문)은 실제로 교실에서 말하는 문장으로 씁니다.
-- 활동은 주어진 수업 시간 안에 실제로 끝날 수 있는 분량으로 합니다.
-- 성취기준 코드를 지어내지 않습니다. 정확히 모르면 코드를 쓰지 말고
-  학습목표만 서술합니다.
-- 학생 개인정보나 실명을 만들어 넣지 않습니다.
-- 표는 마크다운 표로 씁니다.`;
-
-function buildPrompt(v) {
-  const type = PLAN_TYPES.find((t) => t.key === v.planType);
-  const model = TEACHING_MODELS.find((m) => m.key === v.model);
-  const structure = v.planType === "full"
-    ? `1. 단원 개관
-2. 단원 학습 목표
-3. 학습자 실태 (일반적인 수준으로)
-4. 차시별 지도 계획 (표)
-5. 본시 학습 (표: 학습 단계 / 교수·학습 활동 / 시간 / 자료 및 유의점)
-6. 판서 계획
-7. 평가 계획 (평가 기준 상·중·하)`
-    : `1. 학습 목표
-2. 본시 학습 (표: 학습 단계 / 교수·학습 활동 / 시간 / 자료 및 유의점)
-3. 평가 관점`;
-
-  return `아래 조건으로 ${type.label}(${type.pages})을 작성해 주세요.
-
-- 학년: ${v.grade}학년
-- 교과: ${v.subject}
-- 단원·주제: ${v.unit}
-- 수업 시간: ${v.duration}분
-- 수업모형: ${model.label} (${model.steps})
-${v.goal ? `- 교사가 의도한 학습목표: ${v.goal}` : ""}
-
-구성:
-${structure}
-
-본시 학습의 전개는 위 수업모형 단계를 따라 주세요.`;
+// 근거 CSV 는 매 요청마다 읽을 필요가 없다. 파일이 바뀌는 건 배포 때뿐이다.
+// 다만 **읽기 실패를 캐시하지 않는다** — 실패를 빈 데이터로 굳히면
+// "데이터가 없다" 와 "읽는 데 실패했다" 를 영영 구분할 수 없다.
+let evidenceCache = null;
+function evidence() {
+  if (evidenceCache) return evidenceCache;
+  try { evidenceCache = loadAll(); } catch { return null; }
+  return evidenceCache;
 }
 
 export async function POST(request) {
@@ -87,19 +58,58 @@ export async function POST(request) {
   }
 
   const type = PLAN_TYPES.find((t) => t.key === body.planType);
+  // 수업모형을 안 골랐으면 교과·학년으로 채운다. 화면과 같은 함수를 써서
+  // "화면에 보이는 모형" 과 "실제로 쓰인 모형" 이 어긋나지 않게 한다.
+  const input = withDefaults(body);
+  const built = buildLessonPrompt(input, { data: evidence() });
   // 프롬프트를 하드 상한으로 자른다. 자르지 않으면 "최대 비용" 계산이
   // 성립하지 않고, 그러면 예약액을 실제가 넘어설 수 있다.
-  const prompt = clampPrompt(buildPrompt(body));
+  const prompt = clampPrompt(built.prompt);
   const maxOut = type.maxOutTokens;
 
   // --- 이 호출이 낼 수 있는 최대 비용 ---
   // 입력은 잘린 프롬프트, 출력은 API 에 넘길 max_output_tokens 기준이라
   // 실제 비용이 이 값을 넘을 수 없다.
-  const maxKrw = maxCostKrw(model, [...(SYSTEM + prompt)].length, maxOut);
+  const maxKrw = maxCostKrw(model, [...(built.system + prompt)].length, maxOut);
+
+  // --- SR 차감 (flag ON 일 때만) ---
+  // 예산 상한(018)과 목적이 다르다. 예산은 "소유자 지갑이 하루에 얼마까지
+  // 나가는가", SR 은 "한 사람이 얼마나 쓰는가" 다. 예산만 있으면 한 계정이
+  // 하루치를 통째로 소진해 나머지 전원이 못 쓰게 만들 수 있다.
+  //
+  // ⚠️ flag 가 OFF 면 개인별 제한이 **없다**. 023 을 적용한 뒤 켤 것.
+  //    (flag 로 감싸는 이유: 023 없이 배포돼도 지도안이 깨지지 않게)
+  const purpose = body.planType === "full" ? "lesson_plan_full" : "lesson_plan_brief";
+  let charge = null;
+  if (isEnabled("aiCreditCharge")) {
+    const key = `ai:${who.userId}:${purpose}:${Date.now()}`;
+    const { data: ch, error: chErr } = await svc.rpc("svc_charge_ai_credit", {
+      p_member_id: who.userId, p_purpose: purpose, p_idempotency_key: key,
+    });
+    // 차감을 확인하지 못하면 호출하지 않는다(fail-closed). 확인 못 한 채
+    // 돈 쓰는 경로를 두면 제한 장치가 있으나 마나다.
+    if (chErr) return json({ error: "credit_unavailable" }, 503);
+    if (ch?.ok !== true) {
+      return json({ error: ch?.reason ?? "insufficient_sr",
+                    balance: ch?.balance ?? null, cost: ch?.cost ?? null }, 402);
+    }
+    charge = ch;
+  }
+
+  /** SR 을 되돌린다. **실패가 확인된 경우에만** 부른다. */
+  const refund = async () => {
+    if (!charge?.entry_id) return;
+    try {
+      await svc.rpc("svc_refund_ai_credit", {
+        p_member_id: who.userId, p_entry_id: charge.entry_id });
+    } catch { /* 환불 실패는 운영 확인 대상. 응답을 바꾸지 않는다 */ }
+  };
 
   // --- 예약 (한도는 DB 가 정한다) ---
   const res = await reserve(svc, { userId: who.userId, maxKrw });
   if (!res.allowed) {
+    // 예산에 막혀 생성 자체를 못 했다. SR 을 받아 둘 이유가 없다.
+    await refund();
     return json({
       error: res.reason ?? "budget_exceeded",
       spentTodayKrw: res.spentTodayKrw ?? null,
@@ -110,10 +120,11 @@ export async function POST(request) {
   // --- 생성 ---
   let out;
   try {
-    out = await generate({ model, system: SYSTEM, prompt, maxOutTokens: maxOut });
+    out = await generate({ model, system: built.system, prompt, maxOutTokens: maxOut });
   } catch (e) {
     // 호출이 **실패했음이 확인된** 경우다. 이때만 예약을 푼다.
     await release(svc, { reservationId: res.reservationId, userId: who.userId });
+    await refund();   // 호출이 실패했음이 확인된 경우다
     if (e instanceof AiKeyMissing) return json({ error: "ai_not_configured", model }, 503);
     return json({ error: "generation_failed" }, 502);
   }
@@ -123,8 +134,11 @@ export async function POST(request) {
     await settle(svc, {
       reservationId: res.reservationId, userId: who.userId, model,
       inTokens: out.inTokens, outTokens: out.outTokens,
-      purpose: body.planType === "full" ? "lesson_plan_full" : "lesson_plan_brief",
+      purpose,
     });
+    // 사용자는 아무것도 못 받았다. 돈은 나갔을 수 있어도 SR 은 돌려준다 —
+    // 원가는 소유자 부담이고, 사용자에게 빈 결과를 팔 수는 없다.
+    await refund();
     return json({ error: "empty_result" }, 502);
   }
 
@@ -135,7 +149,7 @@ export async function POST(request) {
   const acct = await settle(svc, {
     reservationId: res.reservationId, userId: who.userId, model,
     inTokens: out.inTokens, outTokens: out.outTokens,
-    purpose: body.planType === "full" ? "lesson_plan_full" : "lesson_plan_brief",
+    purpose,
   });
 
   return json({
@@ -144,7 +158,15 @@ export async function POST(request) {
     text: out.text,
     costKrw: acct.actual,
     accounted: acct.ok,
+    // 출력 한도에 걸려 문장 중간에서 끊긴 경우다. 잘린 것을 완성본처럼
+    // 건네지 않는다 — 실습 제출물이라 그대로 내면 사용자가 손해를 본다.
+    truncated: Boolean(out.truncated),
+    // 얼마를 썼는지 숨기지 않는다. 사용자 잔액에서 나간 값이다.
+    spentSr: charge?.cost ?? 0,
+    balanceSr: charge?.balance ?? null,
     // AI 초안임을 응답에 박아 둔다. 화면이 이걸 빼먹어도 원본에 남는다.
-    notice: "AI 가 만든 초안입니다. 반드시 직접 검토·수정해서 쓰세요.",
+    notice: out.truncated
+      ? "분량 한도에 걸려 뒷부분이 잘렸습니다. 다시 생성하거나 범위를 좁혀 주세요."
+      : "AI 가 만든 초안입니다. 반드시 직접 검토·수정해서 쓰세요.",
   }, 200);
 }

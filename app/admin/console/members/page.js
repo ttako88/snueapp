@@ -81,11 +81,14 @@ export default function MembersPage() {
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-bold text-[#0c4470]">
                 {m.nickname || <span className="text-[#0c4470]/40">닉네임 없음</span>}
+                {m.username && <span className="ml-1.5 text-[11px] font-normal text-[#0c4470]/40">@{m.username}</span>}
               </span>
               <span className="block text-[11px] text-[#0c4470]/50">
                 {STATUS_LABEL[m.verification_status] ?? m.verification_status}
                 {m.role !== "member" && ` · ${m.role}`}
                 {m.sanction !== "none" && ` · ${SANCTION_LABEL[m.sanction]}`}
+                {m.hakbeon_verified && " · 🎓학번"}
+                {m.analytics_consent && " · 📊동의"}
               </span>
             </span>
             <span className="text-xs text-[#0c4470]/30">›</span>
@@ -164,8 +167,12 @@ function MemberDetail({ memberId, canManageCost, onClose, onChanged }) {
         {!detail ? <Muted>불러오는 중…</Muted> : (
           <>
             <Row label="닉네임" value={detail.nickname || "없음"} />
+            <Row label="아이디" value={detail.username || "—"} />
+            <Row label="이메일" value={detail.email || "—"} />
             <Row label="권한" value={detail.role} />
             <Row label="인증" value={STATUS_LABEL[detail.verification_status] ?? detail.verification_status} />
+            <Row label="학번 인증" value={detail.hakbeon_verified ? "완료 🎓" : "미등록"} />
+            <Row label="통계 동의" value={detail.analytics_consent ? "동의 📊" : "미동의"} />
             <Row label="제재" value={SANCTION_LABEL[detail.sanction] || "없음"} />
 
             {/* 이용권 */}

@@ -23,6 +23,7 @@ const TABS = [
   // 이용통계는 기존 /admin/analytics 페이지로 연결한다(별도 배포된 라이브 기능).
   // 여기서는 콘솔 진입점만 제공하고, 그 페이지 자체는 건드리지 않는다.
   { href: "/admin/analytics",           label: "분석",   perm: "member.read_basic", external: true },
+  { href: "/admin/console/lesson-analytics", label: "지도안분석", perm: "analytics.read" },
   { href: "/admin/console/boards",      label: "게시판", perm: "board.notice" },
   { href: "/admin/console/moderation",  label: "모더레이션", perm: "moderation.sanction" },
   { href: "/admin/console/sponsors",    label: "광고",   perm: "sponsor.manage" },

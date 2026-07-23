@@ -15,11 +15,11 @@ export const PERMISSIONS_BY_ROLE = {
   owner: [
     "member.read_basic", "member.detail", "moderation.sanction", "board.notice",
     "sponsor.manage", "flag.manage", "entitlement.read", "entitlement.manage_cost",
-    "audit.read",
+    "audit.read", "analytics.read",
   ],
   operator: [
     "member.read_basic", "member.detail", "moderation.sanction", "board.notice",
-    "sponsor.manage", "entitlement.read", "audit.read",
+    "sponsor.manage", "entitlement.read", "audit.read", "analytics.read",
   ],
   moderator: [],
   member: [],

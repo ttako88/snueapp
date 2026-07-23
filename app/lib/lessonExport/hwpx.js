@@ -11,19 +11,21 @@ const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").
 // hwpx v1: 굵게·줄바꿈은 텍스트로 평탄화(한 줄). <br>→공백, **굵게**→일반.
 const plain = (text) => parseInline(text).map((runs) => runs.map((r) => r.text).join("")).join(" ").trim();
 
-const LINESEG = (horz) => `<hp:linesegarray><hp:lineseg textpos="0" vertpos="0" vertsize="1000" textheight="1000" baseline="850" spacing="600" horzpos="0" horzsize="${horz}" flags="393216"/></hp:linesegarray>`;
+// ⚠️ 생성 문단에는 linesegarray(줄 위치 캐시)를 넣지 않는다. 넣으면 vertpos 를
+//    정확히 계산해야 하고, 틀리면 한글이 그 캐시대로 그려 글자가 겹친다(실측).
+//    빼두면 한글이 열 때 스스로 배치한다. (서식의 첫 문단 캐시는 그대로 둔다.)
 
 // 일반 문단
 function paraXml(text) {
   const t = esc(plain(text));
-  return `<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0"><hp:t>${t}</hp:t></hp:run>${LINESEG(42520)}</hp:p>`;
+  return `<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0"><hp:t>${t}</hp:t></hp:run></hp:p>`;
 }
 
 // 표 — base.hwpx 셀 구조 복제. 머리행(ri=0) header="1".
 const TBL_W = 41952;
 function cellXml(text, ci, ri, cellW) {
   const t = esc(plain(text));
-  const inner = `<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0"><hp:t>${t}</hp:t></hp:run>${LINESEG(Math.max(cellW - 1020, 1000))}</hp:p>`;
+  const inner = `<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0"><hp:t>${t}</hp:t></hp:run></hp:p>`;
   return `<hp:tc name="" header="${ri === 0 ? 1 : 0}" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="3"><hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">${inner}</hp:subList><hp:cellAddr colAddr="${ci}" rowAddr="${ri}"/><hp:cellSpan colSpan="1" rowSpan="1"/><hp:cellSz width="${cellW}" height="282"/><hp:cellMargin left="510" right="510" top="141" bottom="141"/></hp:tc>`;
 }
 function tableXml(header, rows) {
@@ -38,7 +40,7 @@ function tableXml(header, rows) {
   }).join("");
   const tbl = `<hp:tbl id="1148708121" zOrder="1" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="1" rowCnt="${rowCnt}" colCnt="${colCnt}" cellSpacing="0" borderFillIDRef="3" noAdjust="0"><hp:sz width="${TBL_W}" widthRelTo="ABSOLUTE" height="${282 * rowCnt}" heightRelTo="ABSOLUTE" protect="0"/><hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/><hp:outMargin left="283" right="283" top="283" bottom="283"/><hp:inMargin left="510" right="510" top="141" bottom="141"/>${trs}</hp:tbl>`;
   // 표는 문단의 run 안에 들어간다(base.hwpx 와 동일 구조).
-  return `<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0">${tbl}<hp:t/></hp:run>${LINESEG(0)}</hp:p>`;
+  return `<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0">${tbl}<hp:t/></hp:run></hp:p>`;
 }
 
 // 블록 → 본문 문단들

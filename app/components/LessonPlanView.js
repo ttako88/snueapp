@@ -1,4 +1,5 @@
 "use client";
+import { useState } from "react";
 // ============================================================
 // LessonPlanView — AI 지도안(마크다운)을 약안·세안 폼으로 렌더 (S/지도안 #1)
 // ============================================================
@@ -79,7 +80,9 @@ export default function LessonPlanView({ text }) {
   }
 
   return (
-    <div className="lp-view flex flex-col gap-2 text-[13px] leading-relaxed text-[#0c4470]">
+    <div className="flex flex-col gap-2">
+      <ExportBar text={text} />
+      <div className="lp-view flex flex-col gap-2 text-[13px] leading-relaxed text-[#0c4470]">
       {blocks.map((b, bi) => {
         if (b.type === "heading") {
           const size = b.level <= 1 ? "text-base" : b.level === 2 ? "text-sm" : "text-[13px]";
@@ -127,6 +130,47 @@ export default function LessonPlanView({ text }) {
         }
         return <p key={bi}>{inline(b.text, `p${bi}`)}</p>;
       })}
+      </div>
+    </div>
+  );
+}
+
+// 내보내기 바 — 지금 보고 있는 지도안을 파일로 저장. 클라이언트에서 바로
+// 생성·다운로드(서버 부하 0). jszip 은 동적 import 로 코드분할한다.
+function ExportBar({ text }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  if (!text) return null;
+
+  async function saveDocx() {
+    setErr(null); setBusy(true);
+    try {
+      const [{ buildDocxBlob }, { titleFromText }] = await Promise.all([
+        import("../lib/lessonExport/docx"),
+        import("../lib/lessonExport/parseBlocks"),
+      ]);
+      const blob = await buildDocxBlob(text);
+      const name = `${titleFromText(text)}.docx`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      setErr("저장에 실패했어요. 잠시 뒤 다시 시도해 주세요.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <button onClick={saveDocx} disabled={busy}
+        className="rounded-lg bg-[#0095da] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">
+        {busy ? "저장 중…" : "📄 Word(.docx)로 저장"}
+      </button>
+      <span className="text-[11px] text-[#0c4470]/45">한글(HWP)에서도 열려요 · 열어서 hwp로 저장</span>
+      {err && <span className="text-[11px] font-bold text-red-500">{err}</span>}
     </div>
   );
 }

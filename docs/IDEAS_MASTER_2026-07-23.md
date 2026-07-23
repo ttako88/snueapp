@@ -35,7 +35,7 @@
 ## 3. 💰 분석·수익화 + 분필(SR) 경제
 - ⏸️ **productAnalytics 대시보드 켜기** — 동의UI·처리방침 문구 확정 후. (기록계층·GA4 G-T287… 라이브)
 - ⏸️ **맞춤광고 targetedAds** — 전부 구현·휴면, **사업자등록 후** flag ON. 게시판별 광고 타게팅(E3/E4)과 연동.
-- 🟡 **SR(분필) 경제** — `POINT_ECONOMY`·`AI_MODELS…§D`. 화폐명 **분필** 확정. 벌기(강의평 +200·추천 +10·광고 +50·후기열람 −50…) / 쓰기(지도안 모델별·후기열람). 현금화·양도 불가. `CURRENCY_SPLIT_DESIGN`(SR/유료/마켓결제 분리).
+- 🟡 **SR(새록) 경제** — `POINT_ECONOMY`·`AI_MODELS…§D`. **화폐명 = SR(새록)** 확정(※실습질문팩의 "분필"은 폐기된 옛 제안). 벌기(강의평·추천·광고·…) / 쓰기(지도안 모델별·후기열람). 현금화·양도 불가. `CURRENCY_SPLIT_DESIGN`(SR/유료/마켓결제 분리).
 - ⏸️ **aiCreditCharge flag ON** ← durable 상태기계(023, timeout 영구차감 방지) 선행.
 - 🔲 결제: 광고 리워드 포인트로 시작, 현금(PG+사업자)은 코드만 만들고 스위치 OFF. `MONETIZATION_ADR`.
 

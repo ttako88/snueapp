@@ -5,10 +5,10 @@
 export default function LessonPlanIntro() {
   return (
     <div className="overflow-hidden rounded-2xl border border-[#0095da]/15 bg-gradient-to-b from-[#eef7ff] to-white p-4">
-      <p className="text-sm font-bold text-[#0c4470]">🎓 아무 AI한테나 시키는 게 아니에요</p>
+      <p className="text-sm font-bold text-[#0c4470]">🎓 교육과정 그대로, 지어내지 않습니다</p>
       <p className="mt-1 text-[12px] leading-relaxed text-[#0c4470]/70">
-        <b>2022 개정 교육과정</b>을 통째로 먹이고, 초등 교과서를 전부 분류·정제해서 학습시켰어요.
-        그래서 <b>성취기준을 지어내는 할루시네이션이 없어요</b> — 실제 교육과정 코드에 그라운딩됩니다.
+        <b>2022 개정 교육과정</b>과 초등 교과서를 과목·단원·차시 단위로 정제해 학습시켰습니다.
+        없는 <b>성취기준을 임의로 만들지 않고</b>, 실제 교육과정에 맞춰 작성합니다.
       </p>
 
       <div className="mt-3 grid grid-cols-2 gap-1.5">
@@ -19,7 +19,7 @@ export default function LessonPlanIntro() {
       </div>
 
       <p className="mt-3 rounded-xl bg-white/70 px-3 py-2 text-[12px] font-bold leading-relaxed text-[#0095da]">
-        ✨ 게다가 원하는 AI를 골라서 작성할 수 있어요! <span className="font-normal text-[#0c4470]/50">(곧 GPT·Claude 등 추가 예정)</span>
+        원하는 AI를 골라 작성할 수 있습니다 <span className="font-normal text-[#0c4470]/50">(GPT·Claude 등 순차 추가)</span>
       </p>
     </div>
   );

@@ -138,38 +138,50 @@ export default function LessonPlanView({ text }) {
 // 내보내기 바 — 지금 보고 있는 지도안을 파일로 저장. 클라이언트에서 바로
 // 생성·다운로드(서버 부하 0). jszip 은 동적 import 로 코드분할한다.
 function ExportBar({ text }) {
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(null); // 'docx' | 'hwpx' | null
   const [err, setErr] = useState(null);
   if (!text) return null;
 
-  async function saveDocx() {
-    setErr(null); setBusy(true);
+  function download(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function save(fmt) {
+    setErr(null); setBusy(fmt);
     try {
-      const [{ buildDocxBlob }, { titleFromText }] = await Promise.all([
-        import("../lib/lessonExport/docx"),
-        import("../lib/lessonExport/parseBlocks"),
-      ]);
-      const blob = await buildDocxBlob(text);
-      const name = `${titleFromText(text)}.docx`;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = name;
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      const { titleFromText } = await import("../lib/lessonExport/parseBlocks");
+      const title = titleFromText(text);
+      if (fmt === "docx") {
+        const { buildDocxBlob } = await import("../lib/lessonExport/docx");
+        download(await buildDocxBlob(text), `${title}.docx`);
+      } else {
+        const { buildHwpxBlob } = await import("../lib/lessonExport/hwpx");
+        download(await buildHwpxBlob(text), `${title}.hwpx`);
+      }
     } catch {
-      setErr("저장에 실패했어요. 잠시 뒤 다시 시도해 주세요.");
+      setErr(fmt === "hwpx"
+        ? "한글 파일 생성에 실패했어요. Word(.docx)로 저장해 주세요."
+        : "저장에 실패했어요. 잠시 뒤 다시 시도해 주세요.");
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <button onClick={saveDocx} disabled={busy}
+      <button onClick={() => save("docx")} disabled={!!busy}
         className="rounded-lg bg-[#0095da] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">
-        {busy ? "저장 중…" : "📄 Word(.docx)로 저장"}
+        {busy === "docx" ? "저장 중…" : "📄 Word(.docx)"}
       </button>
-      <span className="text-[11px] text-[#0c4470]/45">한글(HWP)에서도 열려요 · 열어서 hwp로 저장</span>
+      <button onClick={() => save("hwpx")} disabled={!!busy}
+        className="rounded-lg border border-[#0095da]/40 bg-white px-3 py-1.5 text-xs font-bold text-[#0095da] disabled:opacity-50">
+        {busy === "hwpx" ? "저장 중…" : "📝 한글(.hwpx) 베타"}
+      </button>
+      <span className="text-[11px] text-[#0c4470]/45">Word는 한글에서도 열려요</span>
       {err && <span className="text-[11px] font-bold text-red-500">{err}</span>}
     </div>
   );

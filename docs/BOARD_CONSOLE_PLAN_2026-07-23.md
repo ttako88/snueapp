@@ -264,13 +264,38 @@ git commit -m "feat(board): 콘솔 게시판 관리 모듈(CRUD·상태)"
 **Phase 1 완료 조건:** 034 적용(소유자) 후, owner가 콘솔에서 새 게시판 생성→`/board`에 즉시 노출, 보관→목록에서 사라짐. 코드 배포로 게시판 추가하던 흐름 종료.
 
 ---
-## Phase 2 — 옵션 superset (소유자가 번호 고른 것만 활성)
-설계 `BOARD_CONSOLE_DESIGN_2026-07-23.md` §2의 옵션 컬럼(B~F)을 **선택된 것만** 추가·배선.
-- **2-1 스키마**: 035 마이그레이션으로 선택 옵션 컬럼을 boards에 add(기본 off). `admin_upsert_board`·`list_boards` 반환에 컬럼 추가(반환형 변경 → 함수 drop+recreate, 031 패턴).
-- **2-2 콘솔 편집칸**: 콘솔 폼에 옵션별 토글/셀렉트/숫자 추가(접이식 섹션 B~F).
-- **2-3 배선(옵션별 1 Task씩)**: 각 옵션이 실제 게시판 화면에 작용하게. 예: `allow_anonymous`→작성자 표기 숨김, `market_mode`→가격 필드+목록 노출, `sr_reward_post`→글 작성 시 SR 적립(§3 SR경제 연동), 광고 옵션→광고 컴포넌트 mount(사업자 후).
-- 각 옵션 Task는 [지금]만 즉시, [서버]/[사업자]는 스키마·편집칸까지만(값 저장, 렌더는 인프라 후).
-- **착수 트리거:** 소유자가 A~F 번호 선택 → 그 목록으로 이 Phase의 Task들을 확정.
+## Phase 2 — 옵션 superset (소유자 확정 2026-07-23)
+> **확정 범위**: B(전부) · C(전부) · D=1·2·4·5(3 파일첨부·6 링크미리보기 **제외**) · E(전부, "싹 만들고 사업자 나면 값만") · F(전부, **F4 금지어=무한 자유입력**). **G는 별도 §Phase 3 로드맵**.
+> ⚠️ 마이그레이션 번호: **034=게시판(Phase1+2 컬럼 한 마이그로)**, 035=지도안분석(이미 적용됨), AI콘솔=036. 반환형 바뀌는 함수는 drop+recreate(031 패턴).
+
+**2-1 스키마 (boards 컬럼 add, 기본 off)** — 확정 컬럼:
+- B: `theme_color` · `default_sort('recent'|'popular')` · `use_tags bool`+`tags text[]` · `allow_pinned_notice bool` · `show_thumbnail bool`
+- C: `allow_anonymous` · `write_role('everyone'|'member'|'verified'|'staff')` · `read_public bool` · `allow_comments` · `allow_votes` · `allow_reports` · `min_account_age_days int`
+- D: `allow_image`·`allow_gif`(=[서버], 컬럼만) · `market_mode` · `require_title`+`max_body_chars`
+- E: `ad_banner`·`ad_infeed`+`ad_infeed_interval`·`ad_category`·`ad_unit_id`(=[사업자], 컬럼+콘솔칸만, 렌더 OFF) · `allow_sponsor_pinned` · `sr_reward_post int`+`sr_reward_comment int`
+- F: `auto_hide_reports int` · `write_cooldown_sec int` · `daily_post_limit int` · `banned_words text[]`(**무한 자유입력** — 콘솔에서 단어 추가/삭제 UI, 개수 제한 없음)
+- CHECK: enum·음수금지. `list_boards`/`admin_*_board` 반환에 컬럼 추가.
+
+**2-2 콘솔 편집칸** — 게시판 생성/수정 폼에 접이식 섹션 B~F. E·[서버]옵션엔 "인프라 준비 후 작동" 회색 힌트. F4는 태그형 입력(단어 칩 추가/삭제, 무제한).
+
+**2-3 배선 (옵션→화면, 옵션당 1 Task, [지금]만 즉시)**:
+- B: 색/정렬/말머리/공지고정/썸네일 → 목록·작성 렌더.
+- C1 익명→작성자 숨김 · C2/C3 글쓰기·읽기 게이트 · C4~C6 버튼 노출 · C7 작성 가드.
+- D1·D2 [서버]→스토리지 도입 시 · D4 장터(가격필드+목록 제목·가격·판매상태) · D5 폼 검증.
+- E5 스폰서고정글(즉시) · E6 SR적립(§3 SR경제 연동) · E1~E4 광고=값 저장만, 렌더는 사업자·광고계정 후.
+- F1 신고 자동숨김 · F2 쿨다운 · F3 하루제한 · F4 금지어 필터(작성 시 banned_words 차단).
+- 각 [지금] 옵션은 TDD 1 Task씩. [서버]/[사업자]는 스키마·콘솔칸까지만(값 저장, 렌더 대기).
+
+## Phase 3 — G 콘솔 모듈 로드맵 (소유자 확정: G 전부)
+G1~G8은 각각 **독립 모듈**(사실상 개별 프로젝트)이라 한 번에 안 짓고 순차. 확정 순서 제안(가치·의존도순):
+1. **G2 공지/PR배너 편집**(LessonPlanIntro·전역공지 문구 콘솔화) — 작음·즉효.
+2. **G1 flag 관리**(courseReview·aiCreditCharge 등 콘솔 on/off) — 배포 없이 기능 토글.
+3. **G3 모더레이션 큐**(신고글 일괄 처리+제재, 013/014) · **G4 버그 접수함**(014) — 운영 필수.
+4. **G6 강의평/학교후기 관리**(§3 SR 적립원천과 짝) · **G7 실습학교 데이터 관리**(catalog 업로드).
+5. **G5 광고/스폰서 관리**(E와 짝, 사업자 후) · **G8 약관·개인정보 버전 관리**.
+- 각 모듈은 자체 마이그레이션(리스트 RPC 신설)+콘솔 페이지+권한. 착수 시 개별 계획서로 분할.
+
+> **상태: 계획 확정. 구현 대기(소유자 한도 여유 시 착수).** 착수 순서 기본 = Phase1 → Phase2([지금]우선) → Phase3(G2·G1부터).
 
 ---
 ## Self-Review

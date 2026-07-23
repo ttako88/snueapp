@@ -37,8 +37,6 @@ const MESSAGES = {
 
 export default function LessonPlanPage() {
   const { session, profile, loading: authLoading } = useAuth();
-  // 생성 가능 여부: 공개 flag 가 켜졌거나(모두) owner 본인. 서버가 최종 판정한다.
-  const canUse = isEnabled("lessonPlanPublic") || profile?.role === "owner";
   const [planType, setPlanType] = useState("brief");
   const [grade, setGrade] = useState(3);
   const [subject, setSubject] = useState("국어");
@@ -61,6 +59,11 @@ export default function LessonPlanPage() {
   const result = view ? results[view] : null; // 파생: 지금 화면에 표시할 결과
   const [access, setAccess] = useState(null); // 내 이용권 상태 {allowed,source,remaining}
   const [saveMsg, setSaveMsg] = useState(null); // 저장 결과 안내
+  // 생성 가능 여부(화면 노출용): 공개 flag(모두) · owner 본인 · **또는 이용권 보유자**
+  // (access.allowed). 베타 테스터에게 생성권을 주면 flag 없이도 바로 보인다.
+  // 무권한자는 계속 "준비 중"으로 가려진다. 실제 생성은 서버가 최종 판정한다. access 선언
+  // 뒤에 둔다 — 위에 두면 TDZ(선언 전 참조)로 렌더가 깨진다.
+  const canUse = isEnabled("lessonPlanPublic") || profile?.role === "owner" || access?.allowed === true;
   // 실제 교과서 단원 목록. 있으면 자유 입력 대신 골라서 근거가 100% 매칭된다.
   // 없으면(데이터 미비·네트워크 실패) 자유 입력으로 떨어진다 — 둘 다 동작.
   const [unitList, setUnitList] = useState([]);
@@ -192,12 +195,12 @@ export default function LessonPlanPage() {
         </div>
       )}
 
-      {session && !canUse && (
+      {session && !canUse && access !== null && (
         <div className="rounded-2xl border border-dashed border-[#0095da]/30 bg-white p-5 text-center">
           <p className="text-2xl">🛠️</p>
-          <p className="mt-1 text-sm font-bold text-[#0c4470]">지도안 생성은 준비 중이에요</p>
+          <p className="mt-1 text-sm font-bold text-[#0c4470]">아직 생성권이 없어요</p>
           <p className="mt-1 text-xs leading-relaxed text-[#0c4470]/50">
-            지금은 운영자만 쓸 수 있어요. 곧 모두에게 열어드릴게요.
+            지금은 베타 테스트 중이에요. 지도안 생성권이 있어야 쓸 수 있어요.
           </p>
         </div>
       )}

@@ -14,8 +14,8 @@ export default function LessonPlanIntro() {
       <div className="mt-3 grid grid-cols-2 gap-1.5">
         <Stat n="6" unit="개 출판사" sub="미래엔·비상·YBM·아이스크림·지학사·천재" />
         <Stat n="11" unit="개 전 과목" sub="국·수·사·과·도·미·음·체·실·영·통합" />
-        <Stat n="1~6" unit="학년 전 학년" sub="378개 단원 · 5,884개 차시" />
-        <Stat n="600+" unit="성취기준" sub="평가기준 1,000+ · 수업모형 48종" />
+        <Stat n="1~6" unit="학년 전 학년" sub="499개 단원 · 5,884개 차시" />
+        <Stat n="611" unit="개 성취기준" sub="평가기준 1,000+ · 수업모형 10종" />
       </div>
 
       <p className="mt-3 rounded-xl bg-white/70 px-3 py-2 text-[12px] font-bold leading-relaxed text-[#0095da]">

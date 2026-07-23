@@ -222,10 +222,33 @@ export async function POST(request) {
   // 생성이 성공했다 — 예약한 이용권을 소비로 확정한다(entitlement 경로만 해당).
   await commitFunding();
 
+  // --- 분석 로그(035) ---
+  // 실행 1건을 기록한다(학년·교과서·목차·약/세·모델·비용·SR·약안세안체인).
+  // 실패해도 사용자 응답을 막지 않는다 — 분석은 부수효과다.
+  let runId = null;
+  try {
+    const { data: rid } = await svc.rpc("svc_log_lesson_run", {
+      p_member_id: who.userId,
+      p_plan_type: body.planType,
+      p_model: model,
+      p_funding_source: fundingSource,
+      p_grade: Number.isFinite(Number(input.grade)) ? Number(input.grade) : null,
+      p_subject: input.subject ?? null,
+      p_unit: input.unit || null,
+      p_textbook_id: input.textbookId || null,
+      p_publisher: null, // textbook_id→publisher 도출은 후속
+      p_cost_krw: acct.actual ?? 0,
+      p_sr_spent: charge?.cost ?? 0,
+      p_chained_from: body.chainedFrom || null, // 클라가 약안 run_id 주면 우선(없으면 서버 best-effort)
+    });
+    runId = rid ?? null;
+  } catch { /* 로깅 실패는 사용자 응답을 막지 않는다 */ }
+
   return json({
     planType: body.planType,
     modelLabel: MODELS[model].label,
     text: out.text,
+    runId,
     costKrw: acct.actual,
     accounted: acct.ok,
     // 이 요청이 무엇으로 처리됐는지 — owner/entitlement/paid.

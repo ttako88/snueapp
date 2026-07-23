@@ -2,6 +2,17 @@
 
 > 갱신: 2026-07-20 (Gate 2)
 
+## ⚡ 빠른 명령 (자동화 — 컴팩 후에도 이걸 먼저 확인, 수동 반복 금지!)
+> 전제: 시크릿은 `.env.prod.local`(프로젝트 루트 `snue-app/.env.prod.local`, gitignore)에 있음.
+- **프로덕션 배포**: `node scripts/manual/deploy.mjs`
+  - `.env.prod.local` 에 `VERCEL_DEPLOY_HOOK_URL=...` 1회 등록 필요(Vercel > Settings > Git > Deploy Hooks). URL은 화면에 안 뜸.
+  - Claude가 이 스크립트로 직접 배포 가능(브라우저 훅 왕복 불필요).
+- **pending 마이그레이션 전부 적용**: `node scripts/manual/apply-pending.mjs --execute` (미리보기는 `--execute` 없이)
+  - ⚠️ 하네스가 Claude의 운영 DB 쓰기를 차단 → **이 cmd는 소유자가 실행.** Claude는 dry·검증만.
+  - 적용 후 해당 파일을 `pending/` → `migrations/` 로 **git mv** (안 옮기면 재적용 충돌).
+  - 헛FAIL('anon EXECUTE'·'객체 안 늘었다')은 정상.
+- 배포/적용 성공 여부는 Claude가 읽기 프로브로 실측(예: `scripts/manual/probe-pending-applied.mjs`).
+
 ## 1. 환경 구분 (P0-9 개정: 로컬·Preview 기본 = dev)
 
 | 환경 | Supabase | 키 위치 |
